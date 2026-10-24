@@ -27,6 +27,13 @@ pub(crate) struct ModuleMap {
     pub modules: Vec<ResolvedModule>,
 }
 
+impl ModuleMap {
+    /// The module whose mapped range contains `avma`, for attributing a frame address.
+    pub fn module_for_address(&self, avma: u64) -> Option<&ResolvedModule> {
+        self.modules.iter().find(|m| m.avma_range.contains(&avma))
+    }
+}
+
 /// One mapped file, resolved to an on-disk path where possible.
 pub(crate) struct ResolvedModule {
     /// Short name for reports, the recorded path's final component (e.g. `libc.so.6`).

@@ -10,8 +10,8 @@
 //! points, [`triage`] and [`triage_batch`]. See the repository README for how the stages
 //! fit together.
 //!
-//! Unwinding and symbolication are not wired up yet, so [`triage`] returns threads without
-//! frames, and [`triage_batch`] returns [`Error::Unimplemented`].
+//! Symbolication is not wired up yet, so [`triage`]'s frames carry their module but not yet a
+//! function or source location, and [`triage_batch`] returns [`Error::Unimplemented`].
 
 #![warn(missing_docs)]
 
@@ -72,13 +72,30 @@ pub fn triage(core_path: &Path, opts: &TriageOptions) -> Result<CrashReport> {
         );
     }
 
+    let stacks = crate::unwind::unwind(&parsed, &data, &map);
     let threads = parsed
         .threads
         .iter()
-        .map(|t| ThreadReport {
-            tid: t.tid,
-            name: None,
-            frames: Vec::new(),
+        .zip(stacks)
+        .map(|(t, mut addrs)| {
+            if opts.top > 0 {
+                addrs.truncate(opts.top);
+            }
+            let frames = addrs
+                .iter()
+                .map(|fa| Frame {
+                    // Function, file, and line are filled by symbolication in a later stage.
+                    module: map.module_for_address(fa.address()).map(|m| m.name.clone()),
+                    function: None,
+                    file: None,
+                    line: None,
+                })
+                .collect();
+            ThreadReport {
+                tid: t.tid,
+                name: None,
+                frames,
+            }
         })
         .collect();
     Ok(CrashReport {

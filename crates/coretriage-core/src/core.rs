@@ -76,6 +76,12 @@ impl<'a> CoreMemory<'a> {
         }
         None
     }
+
+    /// Read a little-endian `u64` at `vaddr`, or `None` if that memory is not in the core.
+    pub fn read_u64(&self, vaddr: u64) -> Option<u64> {
+        let b = self.read_bytes(vaddr, 8)?;
+        Some(u64::from_le_bytes(b.try_into().ok()?))
+    }
 }
 
 /// One thread recovered from an `NT_PRSTATUS` note.
@@ -85,6 +91,19 @@ pub(crate) struct ParsedThread {
     pub tid: i32,
     /// Signal that stopped the thread (`pr_cursig`); 0 when there was none.
     pub cursig: i32,
+    /// The thread's register state at the time of the dump, for unwinding.
+    pub regs: Registers,
+}
+
+/// The x86_64 registers unwinding needs, read from the `pr_reg` array of `NT_PRSTATUS`.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Registers {
+    /// Instruction pointer (the thread's current PC).
+    pub rip: u64,
+    /// Stack pointer.
+    pub rsp: u64,
+    /// Frame (base) pointer.
+    pub rbp: u64,
 }
 
 /// Parse the notes of an ELF core dump.
@@ -166,11 +185,18 @@ pub(crate) fn parse(data: &[u8]) -> Result<ParsedCore> {
 }
 
 /// Read the fields we need from a `struct elf_prstatus` descriptor (x86_64 layout):
-/// `pr_cursig` is a `short` at offset 12 and `pr_pid` an `int` at offset 32.
+/// `pr_cursig` is a `short` at offset 12, `pr_pid` an `int` at offset 32, and the
+/// `user_regs_struct` (`pr_reg`) begins at offset 112, with `rbp` at index 4 (offset 144),
+/// `rip` at index 16 (offset 240), and `rsp` at index 19 (offset 264).
 fn parse_prstatus(desc: &[u8]) -> Result<ParsedThread> {
     let cursig = i16::from_le_bytes(read_arr(desc, 12)?) as i32;
     let tid = i32::from_le_bytes(read_arr(desc, 32)?);
-    Ok(ParsedThread { tid, cursig })
+    let regs = Registers {
+        rbp: u64::from_le_bytes(read_arr(desc, 144)?),
+        rip: u64::from_le_bytes(read_arr(desc, 240)?),
+        rsp: u64::from_le_bytes(read_arr(desc, 264)?),
+    };
+    Ok(ParsedThread { tid, cursig, regs })
 }
 
 /// Read `si_addr` (offset 16) from a `siginfo_t` descriptor (x86_64 layout).
