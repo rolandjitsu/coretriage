@@ -1,0 +1,6 @@
+# cargo-fuzz build output and run state. The corpus and crash artifacts are not committed.
+/target
+/corpus
+/artifacts
+/coverage
+Cargo.lock

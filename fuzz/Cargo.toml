@@ -1,0 +1,22 @@
+[package]
+name = "coretriage-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+coretriage-core = { path = "../crates/coretriage-core" }
+
+[[bin]]
+name = "triage_bytes"
+path = "fuzz_targets/triage_bytes.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

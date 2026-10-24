@@ -4,6 +4,9 @@ members = [
     "crates/coretriage-core",
     "crates/coretriage",
 ]
+# The cargo-fuzz crate is its own build (nightly, sanitizer flags); keep it out of the
+# workspace so normal `cargo build`/`test`/`clippy` do not pull in libfuzzer.
+exclude = ["fuzz"]
 
 [workspace.package]
 # knope manages the shared version (see knope.toml); keep it at 0.0.0 until the first release.

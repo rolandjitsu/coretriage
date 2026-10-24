@@ -48,18 +48,30 @@ pub struct TriageOptions {
     pub top: usize,
 }
 
-/// Triage a single core dump into a [`CrashReport`].
+/// Triage a single core dump at `core_path` into a [`CrashReport`].
 ///
-/// Reads the core at `core_path`, recovers its threads and fault, unwinds each thread, and
-/// symbolicates the frames using the modules resolved from `opts`.
+/// Reads the core, recovers its threads and fault, unwinds each thread, and symbolicates the
+/// frames using the modules resolved from `opts`. A convenience wrapper over [`triage_bytes`].
 ///
 /// # Errors
 ///
 /// Returns an error if `core_path` cannot be read or is not a parseable ELF core.
 pub fn triage(core_path: &Path, opts: &TriageOptions) -> Result<CrashReport> {
     let data = std::fs::read(core_path)?;
+    triage_bytes(&data, opts)
+}
+
+/// Triage a core dump already held in memory into a [`CrashReport`].
+///
+/// Identical to [`triage`] but takes the core's bytes directly, for in-memory cores and for
+/// fuzzing the parser. Malformed input returns an error; it never panics.
+///
+/// # Errors
+///
+/// Returns an error if `data` is not a parseable ELF core.
+pub fn triage_bytes(data: &[u8], opts: &TriageOptions) -> Result<CrashReport> {
     let symbolizer = crate::symbolize::Symbolizer::new();
-    let report = triage_with(&data, opts, &symbolizer)?;
+    let report = triage_with(data, opts, &symbolizer)?;
     let signature = crate::signature::compute(&report, opts.top);
     tracing::debug!(hex = %signature.hex, label = %signature.label, "crash signature");
     Ok(report)
@@ -156,13 +168,37 @@ fn triage_with(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::{TempDir, fixture_path};
+    use crate::testutil::{TempDir, fixture_path, load_core};
 
     #[test]
     fn triage_errors_on_missing_core() {
         let opts = TriageOptions::default();
         let result = triage(Path::new("/nonexistent/core"), &opts);
         assert!(matches!(result, Err(Error::Io(_))));
+    }
+
+    #[test]
+    fn truncated_cores_error_without_panic() {
+        let core = load_core("segv");
+        let opts = TriageOptions::default();
+        // Every prefix of a real core must return, never panic. A prefix that still holds
+        // intact notes may legitimately parse (truncating only the memory image is tolerated),
+        // so the sweep only asserts the absence of panics.
+        for len in (0..core.len()).step_by(997) {
+            let _ = triage_bytes(&core[..len], &opts);
+        }
+        // Prefixes that cut the ELF header or the program-header table must error.
+        assert!(triage_bytes(&core[..8], &opts).is_err());
+        assert!(triage_bytes(&core[..256], &opts).is_err());
+    }
+
+    #[test]
+    fn bogus_nt_file_count_is_rejected_without_ooming() {
+        // A hostile NT_FILE claims u64::MAX mappings in a 16-byte descriptor. The parser must
+        // reject it (here the whole core also lacks NT_PRSTATUS) without allocating on the
+        // count; completing this test without OOM or panic is the robustness check.
+        let core = core_with_bogus_nt_file();
+        assert!(triage_bytes(&core, &TriageOptions::default()).is_err());
     }
 
     #[test]
@@ -249,5 +285,43 @@ mod tests {
             .find(|b| b.signature.label.starts_with("SIGABRT in "))
             .expect("abort bucket");
         assert_eq!(abort.count, 1);
+    }
+
+    // Helpers after the tests that use them, per the house rules.
+
+    /// A minimal ELF core carrying one PT_NOTE with a single NT_FILE note that claims
+    /// `u64::MAX` mappings. Used to check the parser bounds the count rather than allocating.
+    fn core_with_bogus_nt_file() -> Vec<u8> {
+        const NT_FILE: u32 = 0x4649_4c45;
+        // Note: name "CORE\0" padded to 8 bytes, then a 16-byte descriptor.
+        let mut note = Vec::new();
+        note.extend_from_slice(&5u32.to_le_bytes()); // n_namesz
+        note.extend_from_slice(&16u32.to_le_bytes()); // n_descsz
+        note.extend_from_slice(&NT_FILE.to_le_bytes()); // n_type
+        note.extend_from_slice(b"CORE\0\0\0\0"); // name, padded to 4 bytes
+        note.extend_from_slice(&u64::MAX.to_le_bytes()); // count
+        note.extend_from_slice(&4096u64.to_le_bytes()); // page_size
+
+        let mut core = vec![0u8; 64 + 56];
+        core[0..4].copy_from_slice(b"\x7fELF");
+        core[4] = 2; // ELFCLASS64
+        core[5] = 1; // ELFDATA2LSB
+        core[6] = 1; // EI_VERSION
+        core[16..18].copy_from_slice(&4u16.to_le_bytes()); // e_type = ET_CORE
+        core[18..20].copy_from_slice(&0x3eu16.to_le_bytes()); // e_machine = x86_64
+        core[20..24].copy_from_slice(&1u32.to_le_bytes()); // e_version
+        core[32..40].copy_from_slice(&64u64.to_le_bytes()); // e_phoff
+        core[52..54].copy_from_slice(&64u16.to_le_bytes()); // e_ehsize
+        core[54..56].copy_from_slice(&56u16.to_le_bytes()); // e_phentsize
+        core[56..58].copy_from_slice(&1u16.to_le_bytes()); // e_phnum
+
+        let ph = 64;
+        core[ph..ph + 4].copy_from_slice(&4u32.to_le_bytes()); // p_type = PT_NOTE
+        core[ph + 8..ph + 16].copy_from_slice(&120u64.to_le_bytes()); // p_offset
+        core[ph + 32..ph + 40].copy_from_slice(&(note.len() as u64).to_le_bytes()); // p_filesz
+        core[ph + 48..ph + 56].copy_from_slice(&1u64.to_le_bytes()); // p_align
+
+        core.extend_from_slice(&note);
+        core
     }
 }
