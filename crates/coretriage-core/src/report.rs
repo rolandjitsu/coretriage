@@ -119,7 +119,7 @@ fn format_frame(frame: &Frame) -> String {
 }
 
 /// Name of a common fatal signal, for the human-readable fault line.
-fn signal_name(signal: i32) -> Option<&'static str> {
+pub(crate) fn signal_name(signal: i32) -> Option<&'static str> {
     match signal {
         4 => Some("SIGILL"),
         6 => Some("SIGABRT"),

@@ -89,11 +89,14 @@ pub fn triage(core_path: &Path, opts: &TriageOptions) -> Result<CrashReport> {
             }
         })
         .collect();
-    Ok(CrashReport {
+    let report = CrashReport {
         fault: parsed.fault,
         threads,
         crashing_tid: parsed.crashing_tid,
-    })
+    };
+    let signature = crate::signature::compute(&report, opts.top);
+    tracing::debug!(hex = %signature.hex, label = %signature.label, "crash signature");
+    Ok(report)
 }
 
 /// Triage every core under `dir` and group the reports into [`Bucket`]s by signature.
