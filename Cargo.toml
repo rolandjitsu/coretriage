@@ -18,7 +18,7 @@ coretriage-core = { path = "crates/coretriage-core", version = "0.0.1" }
 # Core-dump parsing, unwinding, and symbolication. object/gimli/addr2line are a matched trio
 # (addr2line 0.26 resolves gimli 0.33 + object 0.39), and framehop 0.16 shares the same gimli 0.33,
 # so the whole stack agrees on one gimli - the unwinder and the symbolizer exchange its types.
-object = { version = "0.39", default-features = false, features = ["read_core", "elf", "std"] }
+object = { version = "0.40", default-features = false, features = ["read_core", "elf", "std"] }
 gimli = "0.33"
 # addr2line without its `loader` feature. `loader` pulls `object` with default features (incl.
 # `compression`), which drags in ruzstd 0.8 (RUSTSEC-2026-0344: an OOM DoS on crafted zstd, and
