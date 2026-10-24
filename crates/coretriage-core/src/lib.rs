@@ -10,8 +10,8 @@
 //! points, [`triage`] and [`triage_batch`]. See the repository README for how the stages
 //! fit together.
 //!
-//! Symbolication is not wired up yet, so [`triage`]'s frames carry their module but not yet a
-//! function or source location, and [`triage_batch`] returns [`Error::Unimplemented`].
+//! [`triage`] is fully wired: its frames carry module, function, and source location.
+//! [`triage_batch`] returns [`Error::Unimplemented`] until bucketing lands.
 
 #![warn(missing_docs)]
 
@@ -48,8 +48,8 @@ pub struct TriageOptions {
 
 /// Triage a single core dump into a [`CrashReport`].
 ///
-/// Reads the core at `core_path` and recovers its threads and fault. Frames are empty until
-/// unwinding and symbolication land; `opts` takes effect then.
+/// Reads the core at `core_path`, recovers its threads and fault, unwinds each thread, and
+/// symbolicates the frames using the modules resolved from `opts`.
 ///
 /// # Errors
 ///
@@ -73,6 +73,7 @@ pub fn triage(core_path: &Path, opts: &TriageOptions) -> Result<CrashReport> {
     }
 
     let stacks = crate::unwind::unwind(&parsed, &data, &map);
+    let symbolizer = crate::symbolize::Symbolizer::new();
     let threads = parsed
         .threads
         .iter()
@@ -81,20 +82,10 @@ pub fn triage(core_path: &Path, opts: &TriageOptions) -> Result<CrashReport> {
             if opts.top > 0 {
                 addrs.truncate(opts.top);
             }
-            let frames = addrs
-                .iter()
-                .map(|fa| Frame {
-                    // Function, file, and line are filled by symbolication in a later stage.
-                    module: map.module_for_address(fa.address()).map(|m| m.name.clone()),
-                    function: None,
-                    file: None,
-                    line: None,
-                })
-                .collect();
             ThreadReport {
                 tid: t.tid,
                 name: None,
-                frames,
+                frames: symbolizer.symbolize_thread(&map, &addrs),
             }
         })
         .collect();
@@ -117,11 +108,53 @@ pub fn triage_batch(_dir: &Path, _opts: &TriageOptions) -> Result<Vec<Bucket>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testutil::{TempDir, fixture_path};
 
     #[test]
     fn triage_errors_on_missing_core() {
         let opts = TriageOptions::default();
         let result = triage(Path::new("/nonexistent/core"), &opts);
         assert!(matches!(result, Err(Error::Io(_))));
+    }
+
+    #[test]
+    fn segv_backtrace_resolves_c_source_frames() {
+        let dir = TempDir::new("segv");
+        let core = dir.put_core("segv");
+        let opts = TriageOptions {
+            exe: Some(fixture_path("crasher")),
+            top: 0,
+            ..Default::default()
+        };
+        let report = triage(&core, &opts).expect("triage segv core");
+
+        let tid = report.crashing_tid.expect("a crashing thread");
+        let thread = report
+            .threads
+            .iter()
+            .find(|t| t.tid == tid)
+            .expect("crashing thread in report");
+
+        let top: Vec<(&str, u32)> = thread
+            .frames
+            .iter()
+            .take(4)
+            .map(|f| (f.function.as_deref().unwrap_or("?"), f.line.unwrap_or(0)))
+            .collect();
+        assert_eq!(
+            top,
+            vec![("gamma_segv", 8), ("beta", 19), ("alpha", 24), ("main", 29),]
+        );
+        for frame in thread.frames.iter().take(4) {
+            assert_eq!(frame.module.as_deref(), Some("crasher"));
+            assert!(
+                frame
+                    .file
+                    .as_deref()
+                    .is_some_and(|f| f.ends_with("crasher.c")),
+                "unexpected file: {:?}",
+                frame.file
+            );
+        }
     }
 }
