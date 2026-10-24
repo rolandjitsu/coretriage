@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# One release at a time; do not cancel one mid-flight.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      released: ${{ steps.release.outputs.released }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history and tags so knope can read the commits since the last release.
+          fetch-depth: 0
+      - uses: knope-dev/action@v2.1.2
+        with:
+          version: 0.23.0
+      - name: Configure the release identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      # knope bumps the version, updates the changelog, tags, and creates the GitHub
+      # release from the conventional commits since the last tag. Pushing with the
+      # built-in token does not retrigger this workflow, so the publish jobs below run in
+      # this same run instead. `no_release` (no releasable commits since the last tag) is a
+      # normal no-op, not a failure.
+      - name: Release
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          out="$(knope release 2>&1)"
+          code=$?
+          echo "$out"
+          if [ "$code" -eq 0 ]; then
+            # Read the version knope just bumped in the working tree. Do NOT derive it
+            # from `git tag`: with [github] configured, knope creates the tag via the
+            # GitHub API, so it never appears as a local tag in this checkout, and
+            # `git tag | head` would return the *previous* release instead.
+            version="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')"
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "version=${version}" >> "$GITHUB_OUTPUT"
+            echo "::notice::Released v${version}."
+          elif echo "$out" | grep -q 'no_release'; then
+            echo "::notice::No releasable commits since the last release; nothing to do."
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          else
+            exit "$code"
+          fi
+
+  # Build prebuilt binaries for `cargo binstall` and attach them to the release, in the
+  # same run that cut it. Uses GITHUB_TOKEN, no manual setup. The asset naming
+  # (coretriage-<target>.tar.gz, binary at the archive root) matches
+  # crates/coretriage/Cargo.toml [package.metadata.binstall].
+  binaries:
+    name: Binary (${{ matrix.target }})
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: aarch64-unknown-linux-musl, os: ubuntu-latest }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          - { target: aarch64-apple-darwin, os: macos-latest }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.release.outputs.version }}
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: coretriage
+          target: ${{ matrix.target }}
+          archive: $bin-$target
+          tar: unix
+          ref: refs/tags/v${{ needs.release.outputs.version }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # Publish the crates to crates.io in dependency order (coretriage-core before
+  # coretriage), in the same run that cut the release, via trusted publishing: the OIDC
+  # token is exchanged for a short-lived crates.io token, so no API-token secret is stored.
+  # The path-dep version lives in the manifest (bumped by knope), so no stamping is needed.
+  # One-time setup, required before the first release that runs this: `cargo publish -p
+  # <crate>` each crate once to claim the names (the order below), then add a GitHub Actions
+  # trusted publisher (this repo + the `release.yml` workflow) on each crate's crates.io
+  # settings.
+  crates:
+    name: Publish to crates.io
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.release.outputs.version }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Authenticate to crates.io (trusted publishing)
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+      - name: Publish in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          # Skip any crate whose current version is already on crates.io so re-running this
+          # job after a partial publish does not error on the versions already uploaded.
+          # Trusted publishing still cannot create a crate, so a brand-new name is claimed
+          # once by a manual `cargo publish` (see the note above); this only makes re-runs
+          # idempotent.
+          version="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')"
+          for crate in coretriage-core coretriage; do
+            echo "::group::publish $crate v$version"
+            if curl -sf -H 'User-Agent: coretriage-release (github.com/rolandjitsu/coretriage)' \
+                "https://crates.io/api/v1/crates/${crate}/${version}" >/dev/null; then
+              echo "$crate v$version already on crates.io; skipping"
+            else
+              cargo publish -p "$crate" --locked
+            fi
+            echo "::endgroup::"
+          done

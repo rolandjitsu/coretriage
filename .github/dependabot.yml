@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # Rust dependencies. Patch bumps batch into one PR; minor and major updates arrive as
+  # individual PRs for review. The `chore` prefix keeps the commit subject Conventional
+  # Commits compliant.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+    groups:
+      cargo-patch:
+        update-types: ["patch"]
+
+  # GitHub Actions pinned in the workflows (checkout, install-action, upload-rust-binary).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    groups:
+      actions-patch:
+        update-types: ["patch"]

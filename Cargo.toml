@@ -1,0 +1,49 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/coretriage-core",
+    "crates/coretriage",
+]
+
+[workspace.package]
+# knope manages the shared version (see knope.toml); keep it at 0.0.0 until the first release.
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/rolandjitsu/coretriage"
+
+[workspace.dependencies]
+coretriage-core = { path = "crates/coretriage-core", version = "0.0.0" }
+
+# Core-dump parsing, unwinding, and symbolication. object/gimli/addr2line are a matched trio
+# (addr2line 0.26 resolves gimli 0.33 + object 0.39), and framehop 0.16 shares the same gimli 0.33,
+# so the whole stack agrees on one gimli - the unwinder and the symbolizer exchange its types.
+object = { version = "0.39", default-features = false, features = ["read_core", "elf", "std"] }
+gimli = "0.33"
+# addr2line without its `loader` feature. `loader` pulls `object` with default features (incl.
+# `compression`), which drags in ruzstd 0.8 (RUSTSEC-2026-0344: an OOM DoS on crafted zstd, and
+# object 0.39 pins ruzstd to ^0.8 so it cannot take the fix). We read ELF with `object` directly
+# and build an `addr2line::Context` per build-id from gimli sections, so the loader is unused.
+addr2line = { version = "0.26", default-features = false, features = ["rustc-demangle", "cpp_demangle", "fallible-iterator", "smallvec", "std"] }
+# Linux ELF/DWARF unwinding only in v0.1; drop the Mach-O/PE unwind-info parsers.
+framehop = { version = "0.16", default-features = false }
+memmap2 = "0.9"
+
+# Errors, data model, parallel batch, hashing, demangling.
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rayon = "1"
+blake3 = "1"
+cpp_demangle = "0.5"
+rustc-demangle = "0.1"
+
+# CLI.
+clap = { version = "4", features = ["derive", "env"] }
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Dev. criterion trimmed to the bench harness only; no plotting backend.
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+proptest = "1"

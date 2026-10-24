@@ -1,0 +1,5 @@
+# Spell checking (crate-ci/typos), run by the local prek hook and the CI `typos` job.
+# Domain terms the tokenizer would otherwise flag live here.
+[default.extend-words]
+# ELF/core terminology used throughout the docs and module names.
+symbolicate = "symbolicate"

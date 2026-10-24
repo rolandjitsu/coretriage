@@ -1,0 +1,34 @@
+# cargo-deny configuration: security advisories, license policy, and source allowlisting for
+# the dependency tree. Run locally with `cargo deny check`; the CI `Dependencies` job runs the
+# same check on every dependency change and on a daily schedule (advisories are disclosed
+# independently of our code, so a green PR can go red the next day).
+
+[advisories]
+# RUSTSEC advisories. Fail on vulnerable, unsound, or unmaintained crates (the defaults) and on
+# any crate resolved to a yanked version. Add crate-specific waivers to `ignore` with a comment
+# justifying each; none are needed today.
+yanked = "deny"
+ignore = []
+
+[licenses]
+# coretriage is Apache-2.0; only permissive, redistribution-compatible licenses are allowed in
+# the tree. This set is the minimum that satisfies every SPDX expression currently resolved:
+# Apache-2.0 and MIT cover almost everything (every `OR` expression offers one of them), and
+# `unicode-ident` adds `Unicode-3.0` via an `AND` clause, so it must be allowed too. Enabling
+# object's compression support later re-adds a `Zlib`-licensed crate; add `Zlib` here then.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Surface, but do not fail on, duplicate versions of a crate so dependency bloat stays visible
+# without blocking unrelated work.
+multiple-versions = "warn"
+
+[sources]
+# crates.io only: reject crates from unknown registries or git sources.
+unknown-registry = "deny"
+unknown-git = "deny"

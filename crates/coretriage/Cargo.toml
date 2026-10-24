@@ -1,0 +1,29 @@
+[package]
+name = "coretriage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "CLI to triage Linux ELF core dumps: unwind, symbolicate, and bucket crashes and hangs offline."
+keywords = ["coredump", "elf", "debugging", "crash", "backtrace"]
+categories = ["command-line-utilities", "development-tools::debugging"]
+readme = "README.md"
+
+[package.metadata.binstall]
+# cargo-binstall fetches a prebuilt binary instead of compiling. The asset naming matches
+# the binaries job in release.yml (coretriage-<target>.tar.gz, binary at the archive root).
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }.{ archive-format }"
+pkg-fmt = "tgz"
+bin-dir = "{ bin }{ binary-ext }"
+
+[[bin]]
+name = "coretriage"
+path = "src/main.rs"
+
+[dependencies]
+coretriage-core = { workspace = true }
+clap.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

@@ -1,0 +1,25 @@
+# Release automation. On push to main, `knope release` reads the conventional commits since the
+# last tag, bumps the version, updates the changelog, tags, and creates the GitHub release. No
+# PR, no manual step.
+#
+# Both crates share one version (version.workspace), so the single source of truth is the root
+# Cargo.toml ([workspace.package].version); Cargo inheritance carries it to every crate.
+# crates.io publishing runs from CI (release.yml).
+
+[package]
+# Bump, in lockstep, every place the version appears: the shared [workspace.package].version
+# (inherited by each crate), the [workspace.dependencies] path-dep version (required by
+# `cargo publish` and kept in sync so it never drifts), and each member in Cargo.lock. Miss one
+# and `--locked` builds or publishing break after a bump.
+versioned_files = [
+    "Cargo.toml",
+    { path = "Cargo.toml", dependency = "coretriage-core" },
+    { path = "Cargo.lock", dependency = "coretriage-core" },
+    { path = "Cargo.lock", dependency = "coretriage" },
+]
+changelog = "CHANGELOG.md"
+
+# Create a GitHub release (not just a git tag) from the tag, using GITHUB_TOKEN in CI.
+[github]
+owner = "rolandjitsu"
+repo = "coretriage"
