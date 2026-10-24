@@ -55,10 +55,23 @@ pub struct TriageOptions {
 ///
 /// Returns an error if `core_path` cannot be read or is not a parseable ELF core.
 pub fn triage(core_path: &Path, opts: &TriageOptions) -> Result<CrashReport> {
-    // exe/sysroot/top are consumed once module resolution, unwinding, and symbolication land.
-    let _ = opts;
     let data = std::fs::read(core_path)?;
     let parsed = crate::core::parse(&data)?;
+
+    let map = crate::maps::build(&parsed, &data, opts);
+    for m in &map.modules {
+        tracing::debug!(
+            module = %m.name,
+            recorded = ?m.recorded_path,
+            range = ?m.avma_range,
+            base = m.base_avma,
+            load_bias = m.load_bias,
+            on_disk = ?m.on_disk,
+            build_id = ?m.build_id,
+            "resolved module",
+        );
+    }
+
     let threads = parsed
         .threads
         .iter()

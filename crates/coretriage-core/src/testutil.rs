@@ -18,3 +18,10 @@ pub(crate) fn load_core(name: &str) -> Vec<u8> {
         .expect("decompress core fixture");
     buf
 }
+
+/// Path to a committed fixture file by name, e.g. the `crasher` and `hang` binaries.
+pub(crate) fn fixture_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
+}

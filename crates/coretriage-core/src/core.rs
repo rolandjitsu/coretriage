@@ -1,12 +1,12 @@
-//! Parse a raw ELF core dump's notes into the internal [`ParsedCore`]. v0.1 reads the
-//! per-thread status notes (`NT_PRSTATUS`) for each thread id and the fatal signal, and the
-//! signal-info note (`NT_SIGINFO`) for the faulting address. Together they tell a crash (a
-//! fatal signal) from a hang (a core taken from a live process, where there is no signal).
-//! Module mappings (`NT_FILE`) and registers are read by the later pipeline stages that
-//! consume them.
+//! Parse a raw ELF core dump's notes into the internal [`ParsedCore`]. It reads the
+//! per-thread status notes (`NT_PRSTATUS`) for each thread's id, registers, and the fatal
+//! signal, and the signal-info note (`NT_SIGINFO`) for the faulting address. Together they
+//! tell a crash (a fatal signal) from a hang (a core taken from a live process, where there
+//! is no signal). It also exposes the raw `NT_FILE` mapping note for [`crate::maps`] and the
+//! `PT_LOAD` segment table for the core memory accessor in [`crate::unwind`].
 
 use object::Endianness;
-use object::elf::{FileHeader64, PT_NOTE};
+use object::elf::{FileHeader64, PT_LOAD, PT_NOTE};
 use object::read::elf::{FileHeader, ProgramHeader};
 
 use crate::model::FaultKind;
@@ -16,6 +16,8 @@ use crate::{Error, Result};
 const NT_PRSTATUS: u32 = 1;
 /// Note type for a thread's signal info (`siginfo_t`).
 const NT_SIGINFO: u32 = 0x5349_4749;
+/// Note type for the file-backed mapping table (`"FILE"` little-endian).
+const NT_FILE: u32 = 0x4649_4c45;
 
 /// A core dump parsed into the data the pipeline needs.
 #[derive(Debug, Clone)]
@@ -26,6 +28,54 @@ pub(crate) struct ParsedCore {
     pub fault: FaultKind,
     /// The crashing thread's id, or `None` for a hang.
     pub crashing_tid: Option<i32>,
+    /// File-backed memory image: the `PT_LOAD` segments, for reading process memory by
+    /// virtual address (stack, in-memory ELF headers) during unwinding.
+    pub segments: Vec<LoadSegment>,
+    /// Raw `NT_FILE` note descriptor, parsed into the module map by [`crate::maps`]; `None`
+    /// when the core carries no mapping table.
+    pub nt_file: Option<Vec<u8>>,
+}
+
+/// One `PT_LOAD` segment: a run of process memory backed by bytes in the core file.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LoadSegment {
+    /// First virtual address the segment covers.
+    pub vaddr: u64,
+    /// Bytes of the segment actually present in the core (its memory may be larger).
+    pub filesz: u64,
+    /// Offset of those bytes within the core file.
+    pub offset: u64,
+}
+
+/// Read process memory out of a core by virtual address, over its `PT_LOAD` segments. Only
+/// memory actually saved in the core (a segment's `filesz`) is readable; anything else
+/// (unmapped, or pages the kernel elided) reads as absent.
+pub(crate) struct CoreMemory<'a> {
+    data: &'a [u8],
+    segments: &'a [LoadSegment],
+}
+
+impl<'a> CoreMemory<'a> {
+    /// Build an accessor over `data` (the whole core) and its parsed `segments`.
+    pub fn new(data: &'a [u8], segments: &'a [LoadSegment]) -> Self {
+        Self { data, segments }
+    }
+
+    /// Bytes at virtual address `vaddr`, up to `len`, when a single segment holds them all.
+    /// Returns `None` if no segment covers the range or the core file is too short for it.
+    pub fn read_bytes(&self, vaddr: u64, len: u64) -> Option<&'a [u8]> {
+        let end = vaddr.checked_add(len)?;
+        for seg in self.segments {
+            let seg_end = seg.vaddr.checked_add(seg.filesz)?;
+            if vaddr >= seg.vaddr && end <= seg_end {
+                let rel = vaddr - seg.vaddr;
+                let start = usize::try_from(seg.offset.checked_add(rel)?).ok()?;
+                let stop = start.checked_add(usize::try_from(len).ok()?)?;
+                return self.data.get(start..stop);
+            }
+        }
+        None
+    }
 }
 
 /// One thread recovered from an `NT_PRSTATUS` note.
@@ -49,9 +99,19 @@ pub(crate) fn parse(data: &[u8]) -> Result<ParsedCore> {
         .map_err(|e| Error::Parse(format!("program headers: {e}")))?;
 
     let mut threads = Vec::new();
+    let mut segments = Vec::new();
+    let mut nt_file: Option<Vec<u8>> = None;
     // The crashing thread's notes come first, so the first NT_SIGINFO is its faulting address.
     let mut fault_addr: Option<u64> = None;
     for ph in headers {
+        if ph.p_type(endian) == PT_LOAD {
+            segments.push(LoadSegment {
+                vaddr: ph.p_vaddr(endian),
+                filesz: ph.p_filesz(endian),
+                offset: ph.p_offset(endian),
+            });
+            continue;
+        }
         if ph.p_type(endian) != PT_NOTE {
             continue;
         }
@@ -68,6 +128,8 @@ pub(crate) fn parse(data: &[u8]) -> Result<ParsedCore> {
             match note.n_type(endian) {
                 NT_PRSTATUS => threads.push(parse_prstatus(note.desc())?),
                 NT_SIGINFO if fault_addr.is_none() => fault_addr = Some(read_si_addr(note.desc())?),
+                // Keep the first NT_FILE; a core carries exactly one mapping table.
+                NT_FILE if nt_file.is_none() => nt_file = Some(note.desc().to_vec()),
                 _ => {}
             }
         }
@@ -98,6 +160,8 @@ pub(crate) fn parse(data: &[u8]) -> Result<ParsedCore> {
         threads,
         fault,
         crashing_tid,
+        segments,
+        nt_file,
     })
 }
 
