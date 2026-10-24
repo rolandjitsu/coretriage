@@ -24,7 +24,7 @@ gimli = "0.33"
 # `compression`), which drags in ruzstd 0.8 (RUSTSEC-2026-0344: an OOM DoS on crafted zstd, and
 # object 0.39 pins ruzstd to ^0.8 so it cannot take the fix). We read ELF with `object` directly
 # and build an `addr2line::Context` per build-id from gimli sections, so the loader is unused.
-addr2line = { version = "0.26", default-features = false, features = ["rustc-demangle", "cpp_demangle", "fallible-iterator", "smallvec", "std"] }
+addr2line = { version = "0.27", default-features = false, features = ["rustc-demangle", "cpp_demangle", "fallible-iterator", "smallvec", "std"] }
 # Linux ELF/DWARF unwinding only in v0.1; drop the Mach-O/PE unwind-info parsers.
 framehop = { version = "0.16", default-features = false }
 memmap2 = "0.9"
