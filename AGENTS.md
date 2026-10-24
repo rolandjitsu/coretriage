@@ -37,7 +37,7 @@ cargo test --workspace --all-features
   voice: `feat: add the dwarf unwinder`, not `added` or `adds`.
 - Keep the body minimal, or omit it. A good subject plus the diff is usually enough; add a body
   only for what the code cannot show (why, a trade-off, a non-obvious consequence).
-- Subject <= 72 characters; wrap body lines at ~72 columns. The `committed` hook and CI enforce it.
+- Subject <= 50 characters; wrap body lines at ~72 columns. The `committed` hook and CI enforce it.
 - Disclose AI with an `Assisted-by: Claude:claude-opus-4-8` trailer. Never `Co-Authored-By`, and
   never add a human's `Signed-off-by`.
 
