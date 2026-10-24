@@ -54,10 +54,12 @@ impl OutputFormat {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
+    // Logs go to stderr so stdout carries only the report (clean JSON for piping).
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
+        .with_writer(std::io::stderr)
         .init();
 
     let opts = TriageOptions {
