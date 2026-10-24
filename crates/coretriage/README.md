@@ -23,7 +23,7 @@ Prebuilt binaries for Linux and macOS are attached to each
 ```sh
 coretriage core.1234                      # triage one core
 coretriage --exe ./target/release/app core.1234
-coretriage cores/ --json                  # batch a directory, bucket, emit JSON
+coretriage cores/ --format json           # batch a directory, bucket, emit JSON
 ```
 
 Full design, pipeline, and scope are in the

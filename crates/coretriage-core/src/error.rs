@@ -9,6 +9,9 @@ pub enum Error {
     /// The core, or an auxiliary file it references, could not be parsed.
     #[error("parse error: {0}")]
     Parse(String),
+    /// Output could not be serialized to the requested format.
+    #[error("serialize error: {0}")]
+    Serialize(#[from] serde_json::Error),
     /// The requested operation is not implemented yet.
     #[error("not implemented")]
     Unimplemented,

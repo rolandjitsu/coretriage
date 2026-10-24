@@ -52,7 +52,7 @@ distinct crashes are reported with their counts and a representative backtrace:
 
 ```sh
 coretriage cores/                 # text report, ranked buckets
-coretriage cores/ --json          # machine-readable
+coretriage cores/ --format json   # machine-readable
 coretriage cores/ --top 32        # keep more frames per thread
 ```
 
@@ -87,6 +87,26 @@ v0.1 targets **Linux x86_64 ELF cores**. Modules are resolved from the core's `N
 and from explicit `--exe` / `--sysroot` paths you provide; automatic build-id lookup and
 `debuginfod` fetching come later. Other architectures (aarch64) and split-debuginfo stores are
 on the roadmap, not in v0.1.
+
+## Roadmap: output formats
+
+Output is layered - the pipeline produces the data model and the `report` module renders it
+through an `Emitter`, so a new format is one more emitter, not a change to the pipeline. v0.1 ships
+text and JSON. Planned, in rough order of value:
+
+- **Folded stacks / flame graph.** Emit Brendan Gregg folded-stack format to pipe into `inferno`
+  or any flame-graph tool. A crash flame graph shows where crashes concentrate; for a hang, an
+  all-thread merged graph shows where every thread is parked.
+- **pprof.** A bucket is a weighted stack sample, exactly what pprof encodes, so crash frequency
+  can be explored in Pyroscope, Parca, or Grafana. This is also the natural OpenTelemetry fit, as
+  its profiling signal is pprof-based.
+- **OpenTelemetry events and metrics.** Emit each bucket as a structured event or counter
+  (signature, signal, top frame, build-id, count) to track crash signatures over time and alert
+  when a new one appears or a rate spikes.
+
+The CLI stays offline: it writes files other tools ingest rather than embedding an exporter; a
+direct `--otel <endpoint>` exporter may come later behind a feature flag. Traces and spans are not
+a target - a backtrace has no causal or temporal structure to map onto a span tree.
 
 ## License
 

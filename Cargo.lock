@@ -306,7 +306,6 @@ dependencies = [
  "anyhow",
  "clap",
  "coretriage-core",
- "serde_json",
  "tracing",
  "tracing-subscriber",
 ]

@@ -22,13 +22,14 @@ pub mod model;
 mod aggregate;
 mod core;
 mod maps;
-mod report;
+pub mod report;
 mod signature;
 mod symbolize;
 mod unwind;
 
 pub use error::{Error, Result};
 pub use model::{Bucket, CrashReport, FaultKind, Frame, Module, Signature, ThreadReport};
+pub use report::{Emitter, JsonEmitter, TextEmitter};
 
 /// Inputs that control a triage run.
 #[derive(Debug, Clone, Default)]
