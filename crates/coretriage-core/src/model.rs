@@ -45,9 +45,17 @@ pub struct ThreadReport {
 
 /// What took the process down.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum FaultKind {
-    /// Terminated by a fatal signal (SIGSEGV, SIGABRT, ...); carries the signal number.
-    Signal(i32),
+    /// Terminated by a fatal signal.
+    Signal {
+        /// Signal number (e.g. 11 for SIGSEGV, 6 for SIGABRT).
+        number: i32,
+        /// Faulting address for memory faults (SIGSEGV, SIGBUS, SIGILL, SIGFPE);
+        /// `None` for signals that carry no meaningful address.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        address: Option<u64>,
+    },
     /// No fatal signal: a core captured from a live, hung process (e.g. via `gcore`).
     Hang,
 }

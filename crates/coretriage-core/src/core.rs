@@ -1,8 +1,9 @@
 //! Parse a raw ELF core dump's notes into the internal [`ParsedCore`]. v0.1 reads the
-//! per-thread status notes (`NT_PRSTATUS`) to recover each thread id and the fatal signal,
-//! which is enough to tell a crash (a fatal signal) from a hang (a core taken from a live
-//! process, where there is no signal). Module mappings (`NT_FILE`) and registers are read by
-//! the later pipeline stages that consume them.
+//! per-thread status notes (`NT_PRSTATUS`) for each thread id and the fatal signal, and the
+//! signal-info note (`NT_SIGINFO`) for the faulting address. Together they tell a crash (a
+//! fatal signal) from a hang (a core taken from a live process, where there is no signal).
+//! Module mappings (`NT_FILE`) and registers are read by the later pipeline stages that
+//! consume them.
 
 use object::Endianness;
 use object::elf::{FileHeader64, PT_NOTE};
@@ -13,6 +14,8 @@ use crate::{Error, Result};
 
 /// Note type for a thread's status record (`struct elf_prstatus`).
 const NT_PRSTATUS: u32 = 1;
+/// Note type for a thread's signal info (`siginfo_t`).
+const NT_SIGINFO: u32 = 0x5349_4749;
 
 /// A core dump parsed into the data the pipeline needs.
 #[derive(Debug, Clone)]
@@ -46,6 +49,8 @@ pub(crate) fn parse(data: &[u8]) -> Result<ParsedCore> {
         .map_err(|e| Error::Parse(format!("program headers: {e}")))?;
 
     let mut threads = Vec::new();
+    // The crashing thread's notes come first, so the first NT_SIGINFO is its faulting address.
+    let mut fault_addr: Option<u64> = None;
     for ph in headers {
         if ph.p_type(endian) != PT_NOTE {
             continue;
@@ -60,8 +65,10 @@ pub(crate) fn parse(data: &[u8]) -> Result<ParsedCore> {
             .next()
             .map_err(|e| Error::Parse(format!("note: {e}")))?
         {
-            if note.n_type(endian) == NT_PRSTATUS {
-                threads.push(parse_prstatus(note.desc())?);
+            match note.n_type(endian) {
+                NT_PRSTATUS => threads.push(parse_prstatus(note.desc())?),
+                NT_SIGINFO if fault_addr.is_none() => fault_addr = Some(read_si_addr(note.desc())?),
+                _ => {}
             }
         }
     }
@@ -69,10 +76,22 @@ pub(crate) fn parse(data: &[u8]) -> Result<ParsedCore> {
     let crashing = *threads
         .first()
         .ok_or_else(|| Error::Parse("no NT_PRSTATUS note; not a core dump?".to_string()))?;
+    // pr_cursig is the reliable signal indicator (0 for a gcore snapshot of a live process).
+    // NT_SIGINFO only supplies the address, and only memory faults carry a meaningful one.
     let (fault, crashing_tid) = if crashing.cursig == 0 {
         (FaultKind::Hang, None)
     } else {
-        (FaultKind::Signal(crashing.cursig), Some(crashing.tid))
+        let address = match crashing.cursig {
+            4 | 7 | 8 | 11 => fault_addr, // SIGILL, SIGBUS, SIGFPE, SIGSEGV
+            _ => None,
+        };
+        (
+            FaultKind::Signal {
+                number: crashing.cursig,
+                address,
+            },
+            Some(crashing.tid),
+        )
     };
 
     Ok(ParsedCore {
@@ -90,6 +109,11 @@ fn parse_prstatus(desc: &[u8]) -> Result<ParsedThread> {
     Ok(ParsedThread { tid, cursig })
 }
 
+/// Read `si_addr` (offset 16) from a `siginfo_t` descriptor (x86_64 layout).
+fn read_si_addr(desc: &[u8]) -> Result<u64> {
+    Ok(u64::from_le_bytes(read_arr(desc, 16)?))
+}
+
 /// Read a fixed-size little-endian field from `bytes` at `offset`, or fail if it is short.
 fn read_arr<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]> {
     bytes
@@ -104,18 +128,30 @@ mod tests {
     use crate::testutil::load_core;
 
     #[test]
-    fn segv_core_is_single_thread_sigsegv() {
+    fn segv_core_is_single_thread_sigsegv_at_null() {
         let core = parse(&load_core("segv")).expect("parse segv core");
         assert_eq!(core.threads.len(), 1);
-        assert_eq!(core.fault, FaultKind::Signal(11));
+        assert_eq!(
+            core.fault,
+            FaultKind::Signal {
+                number: 11,
+                address: Some(0),
+            }
+        );
         assert_eq!(core.crashing_tid, Some(core.threads[0].tid));
     }
 
     #[test]
-    fn abort_core_is_sigabrt() {
+    fn abort_core_is_sigabrt_without_address() {
         let core = parse(&load_core("abort")).expect("parse abort core");
         assert_eq!(core.threads.len(), 1);
-        assert_eq!(core.fault, FaultKind::Signal(6));
+        assert_eq!(
+            core.fault,
+            FaultKind::Signal {
+                number: 6,
+                address: None,
+            }
+        );
     }
 
     #[test]

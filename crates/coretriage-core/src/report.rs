@@ -77,11 +77,18 @@ impl JsonEmitter {
 }
 
 fn write_report(report: &CrashReport, out: &mut dyn Write) -> Result<()> {
-    match report.fault {
-        FaultKind::Signal(sig) => match signal_name(sig) {
-            Some(name) => writeln!(out, "fault: signal {sig} ({name})")?,
-            None => writeln!(out, "fault: signal {sig}")?,
-        },
+    match &report.fault {
+        FaultKind::Signal { number, address } => {
+            let number = *number;
+            match (signal_name(number), *address) {
+                (Some(name), Some(addr)) => {
+                    writeln!(out, "fault: signal {number} ({name}) at {addr:#x}")?
+                }
+                (Some(name), None) => writeln!(out, "fault: signal {number} ({name})")?,
+                (None, Some(addr)) => writeln!(out, "fault: signal {number} at {addr:#x}")?,
+                (None, None) => writeln!(out, "fault: signal {number}")?,
+            }
+        }
         FaultKind::Hang => writeln!(out, "fault: hang (no fatal signal)")?,
     }
     for thread in &report.threads {
@@ -132,7 +139,7 @@ mod tests {
     fn text_report_marks_the_crashing_thread_and_names_the_signal() {
         let report = sample_report();
         let out = render(|w| TextEmitter.emit_report(&report, w));
-        assert!(out.contains("signal 11 (SIGSEGV)"), "{out}");
+        assert!(out.contains("signal 11 (SIGSEGV) at 0x0"), "{out}");
         assert!(out.contains("* thread 42 (worker)"), "{out}");
         assert!(
             out.contains("#0 app!Widget::render (src/widget.rs:88)"),
@@ -169,7 +176,10 @@ mod tests {
     // Helpers after the tests that use them, per the house rules.
     fn sample_report() -> CrashReport {
         CrashReport {
-            fault: FaultKind::Signal(11),
+            fault: FaultKind::Signal {
+                number: 11,
+                address: Some(0),
+            },
             crashing_tid: Some(42),
             threads: vec![ThreadReport {
                 tid: 42,
