@@ -47,3 +47,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Dev. criterion trimmed to the bench harness only; no plotting backend.
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 proptest = "1"
+# Decompress the gzipped core fixtures in tests (pure-Rust backend).
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }

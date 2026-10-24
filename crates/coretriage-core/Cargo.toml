@@ -30,6 +30,7 @@ rustc-demangle.workspace = true
 [dev-dependencies]
 criterion.workspace = true
 proptest.workspace = true
+flate2.workspace = true
 
 [[bench]]
 name = "triage"

@@ -10,7 +10,8 @@
 //! points, [`triage`] and [`triage_batch`]. See the repository README for how the stages
 //! fit together.
 //!
-//! The pipeline is not implemented yet; both entry points return [`Error::Unimplemented`].
+//! Unwinding and symbolication are not wired up yet, so [`triage`] returns threads without
+//! frames, and [`triage_batch`] returns [`Error::Unimplemented`].
 
 #![warn(missing_docs)]
 
@@ -26,6 +27,9 @@ pub mod report;
 mod signature;
 mod symbolize;
 mod unwind;
+
+#[cfg(test)]
+mod testutil;
 
 pub use error::{Error, Result};
 pub use model::{Bucket, CrashReport, FaultKind, Frame, Module, Signature, ThreadReport};
@@ -44,11 +48,31 @@ pub struct TriageOptions {
 
 /// Triage a single core dump into a [`CrashReport`].
 ///
+/// Reads the core at `core_path` and recovers its threads and fault. Frames are empty until
+/// unwinding and symbolication land; `opts` takes effect then.
+///
 /// # Errors
 ///
-/// Returns [`Error::Unimplemented`] until the pipeline lands.
-pub fn triage(_core_path: &Path, _opts: &TriageOptions) -> Result<CrashReport> {
-    Err(Error::Unimplemented)
+/// Returns an error if `core_path` cannot be read or is not a parseable ELF core.
+pub fn triage(core_path: &Path, opts: &TriageOptions) -> Result<CrashReport> {
+    // exe/sysroot/top are consumed once module resolution, unwinding, and symbolication land.
+    let _ = opts;
+    let data = std::fs::read(core_path)?;
+    let parsed = crate::core::parse(&data)?;
+    let threads = parsed
+        .threads
+        .iter()
+        .map(|t| ThreadReport {
+            tid: t.tid,
+            name: None,
+            frames: Vec::new(),
+        })
+        .collect();
+    Ok(CrashReport {
+        fault: parsed.fault,
+        threads,
+        crashing_tid: parsed.crashing_tid,
+    })
 }
 
 /// Triage every core under `dir` and group the reports into [`Bucket`]s by signature.
@@ -65,9 +89,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn triage_is_unimplemented_for_now() {
+    fn triage_errors_on_missing_core() {
         let opts = TriageOptions::default();
         let result = triage(Path::new("/nonexistent/core"), &opts);
-        assert!(matches!(result, Err(Error::Unimplemented)));
+        assert!(matches!(result, Err(Error::Io(_))));
     }
 }
