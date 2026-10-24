@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or usage help
+    url: https://github.com/rolandjitsu/coretriage/discussions
+    about: Ask and answer usage questions in Discussions. Check the README and the docs.rs API reference first.

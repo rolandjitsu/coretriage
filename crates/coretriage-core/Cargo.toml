@@ -1,0 +1,36 @@
+[package]
+name = "coretriage-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Offline triage of Linux ELF core dumps: parse, unwind, symbolicate, and bucket crashes and hangs."
+keywords = ["coredump", "elf", "debugging", "crash", "backtrace"]
+categories = ["development-tools::debugging", "command-line-utilities"]
+readme = "README.md"
+
+[package.metadata.docs.rs]
+# Build the full API on docs.rs, including every optional feature.
+all-features = true
+
+[dependencies]
+object.workspace = true
+gimli.workspace = true
+addr2line.workspace = true
+framehop.workspace = true
+memmap2.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rayon.workspace = true
+blake3.workspace = true
+cpp_demangle.workspace = true
+rustc-demangle.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+
+[[bench]]
+name = "triage"
+harness = false

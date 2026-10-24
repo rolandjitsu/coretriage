@@ -1,0 +1,10 @@
+/target
+Cargo.lock.bak
+*.swp
+lcov.info
+
+### macOS ###
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
