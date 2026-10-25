@@ -449,7 +449,7 @@ mod tests {
         );
         assert_eq!(
             crasher.build_id.as_deref(),
-            Some("d16533ecc2349538fd0b48ca8bb08ced4ce96bff")
+            Some("2d4984456a0c95229abe1c1c9007381b98872995")
         );
         // A PIE loads at its base address, so the bias equals that address.
         assert_eq!(crasher.load_bias, crasher.base_avma);
@@ -484,7 +484,7 @@ mod tests {
         let core = load_core("segv");
         let parsed = crate::core::parse(&core).expect("parse segv core");
         let store = TempDir::new("buildid-maps");
-        store.put_build_id("crasher", "d16533ecc2349538fd0b48ca8bb08ced4ce96bff", "");
+        store.put_build_id("crasher", "2d4984456a0c95229abe1c1c9007381b98872995", "");
         let opts = TriageOptions {
             debug_dirs: vec![store.path.clone()],
             ..Default::default()
@@ -502,7 +502,7 @@ mod tests {
         assert!(crasher.debug.is_none(), "unstripped binary needs no .debug");
         assert_eq!(
             crasher.build_id.as_deref(),
-            Some("d16533ecc2349538fd0b48ca8bb08ced4ce96bff")
+            Some("2d4984456a0c95229abe1c1c9007381b98872995")
         );
     }
 

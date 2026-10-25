@@ -259,7 +259,7 @@ mod tests {
     fn segv_backtrace_resolves_by_build_id_without_exe() {
         // A debug store holding the crasher binary under its build-id, elfutils layout.
         let store = TempDir::new("buildid-store");
-        store.put_build_id("crasher", "d16533ecc2349538fd0b48ca8bb08ced4ce96bff", "");
+        store.put_build_id("crasher", "2d4984456a0c95229abe1c1c9007381b98872995", "");
 
         let dir = TempDir::new("segv-buildid");
         let core = dir.put_core("segv");
@@ -289,6 +289,39 @@ mod tests {
         for frame in thread.frames.iter().take(4) {
             assert_eq!(frame.module.as_deref(), Some("crasher"));
         }
+    }
+
+    #[test]
+    fn segv_backtrace_resolves_from_stripped_split_debug_store() {
+        let dir = TempDir::new("segv-split");
+        let core = dir.put_core("segv");
+        // The store holds a stripped crasher (for .eh_frame unwinding) and its separate .debug
+        // (for DWARF), both keyed by build-id, so a stripped binary symbolicates with no --exe.
+        let opts = TriageOptions {
+            debug_dirs: vec![fixture_path("debugstore")],
+            top: 0,
+            ..Default::default()
+        };
+        let report = triage(&core, &opts).expect("triage segv core");
+
+        let tid = report.crashing_tid.expect("a crashing thread");
+        let thread = report
+            .threads
+            .iter()
+            .find(|t| t.tid == tid)
+            .expect("crashing thread in report");
+
+        // Source lines prove the separate .debug DWARF was used, not just the symbol table.
+        let top: Vec<(&str, u32)> = thread
+            .frames
+            .iter()
+            .take(4)
+            .map(|f| (f.function.as_deref().unwrap_or("?"), f.line.unwrap_or(0)))
+            .collect();
+        assert_eq!(
+            top,
+            vec![("gamma_segv", 8), ("beta", 19), ("alpha", 24), ("main", 29)]
+        );
     }
 
     #[test]
