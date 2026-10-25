@@ -42,6 +42,9 @@ pub(crate) struct ResolvedModule {
     pub recorded_path: PathBuf,
     /// The file located on this machine for symbols and unwind info, if any was found.
     pub on_disk: Option<PathBuf>,
+    /// The separate debuginfo file carrying this module's DWARF, when the on-disk binary was
+    /// stripped of it and a matching `.debug` was found. `None` when `on_disk` holds the DWARF.
+    pub debug: Option<PathBuf>,
     /// GNU build-id of the on-disk file, lowercase hex, when it carries one.
     pub build_id: Option<String>,
     /// Virtual-address range the module occupies in the process (union of its mappings).
@@ -88,6 +91,7 @@ pub(crate) fn build(parsed: &ParsedCore, core: &[u8], opts: &TriageOptions) -> M
     }
 
     let mem = CoreMemory::new(core, &parsed.segments);
+    let debug_dirs = effective_debug_dirs(opts);
     let mut modules = Vec::new();
     for path in order {
         let group = &groups[&path];
@@ -106,7 +110,26 @@ pub(crate) fn build(parsed: &ParsedCore, core: &[u8], opts: &TriageOptions) -> M
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
 
-        let on_disk = resolve_on_disk(&path, opts);
+        // The build-id drives the debug-store lookups. Prefer the one the crashing process
+        // actually ran (recorded in the core image), falling back to the on-disk file's.
+        let in_core = in_core_build_id(&mem, base_avma);
+
+        // Direct path lookups first: recorded path, then --exe, then --sysroot.
+        let mut on_disk = resolve_on_disk(&path, opts);
+        let driving_id = in_core.clone().or_else(|| {
+            on_disk
+                .as_deref()
+                .and_then(read_elf_info)
+                .and_then(|(id, _)| id)
+        });
+
+        // Not found by path: look the executable up by build-id in the debug stores.
+        if on_disk.is_none()
+            && let Some(id) = &driving_id
+        {
+            on_disk = resolve_build_id_file(&debug_dirs, id, "");
+        }
+
         let (build_id, min_svma) = match on_disk.as_deref().and_then(read_elf_info) {
             Some((id, min)) => (id, min),
             // Unresolved, or shared objects start at svma 0, so the bias is the load address.
@@ -114,10 +137,20 @@ pub(crate) fn build(parsed: &ParsedCore, core: &[u8], opts: &TriageOptions) -> M
         };
         let load_bias = base_avma.saturating_sub(min_svma);
 
+        // The DWARF: the binary itself when it still carries `.debug_info`, else the separate
+        // `.debug` file keyed by the same build-id in a debug store.
+        let debug = if on_disk.as_deref().is_some_and(has_debug_info) {
+            None
+        } else if let Some(id) = &driving_id {
+            resolve_build_id_file(&debug_dirs, id, ".debug")
+        } else {
+            None
+        };
+
         // A wrong --exe/--sysroot silently yields bad symbols; warn when the on-disk build-id
         // disagrees with the one the crashing process actually had, but proceed regardless.
-        if let (Some(disk), Some(in_core)) = (&build_id, in_core_build_id(&mem, base_avma))
-            && disk != &in_core
+        if let (Some(disk), Some(in_core)) = (&build_id, &in_core)
+            && disk != in_core
         {
             tracing::warn!(
                 module = %name,
@@ -131,6 +164,7 @@ pub(crate) fn build(parsed: &ParsedCore, core: &[u8], opts: &TriageOptions) -> M
             name,
             recorded_path: path,
             on_disk,
+            debug,
             build_id,
             avma_range: start..end,
             base_avma,
@@ -227,6 +261,49 @@ fn resolve_on_disk(recorded: &Path, opts: &TriageOptions) -> Option<PathBuf> {
     None
 }
 
+/// The debug stores to search: the user's `--debug-dir` list, or the elfutils default
+/// `/usr/lib/debug` when none were given.
+fn effective_debug_dirs(opts: &TriageOptions) -> Vec<PathBuf> {
+    if opts.debug_dirs.is_empty() {
+        vec![PathBuf::from("/usr/lib/debug")]
+    } else {
+        opts.debug_dirs.clone()
+    }
+}
+
+/// Locate a build-id artifact in the debug stores, in the elfutils layout
+/// `<dir>/.build-id/<ab>/<rest><suffix>`: `<ab>` is the first two hex chars of the build-id and
+/// `<rest>` the remainder. `suffix` is empty for the executable or `.debug` for its debuginfo.
+fn resolve_build_id_file(debug_dirs: &[PathBuf], build_id: &str, suffix: &str) -> Option<PathBuf> {
+    // A build-id needs at least the two-char directory plus one more char to split.
+    if build_id.len() < 3 {
+        return None;
+    }
+    let (ab, rest) = build_id.split_at(2);
+    let rel = Path::new(".build-id")
+        .join(ab)
+        .join(format!("{rest}{suffix}"));
+    for dir in debug_dirs {
+        let candidate = dir.join(&rel);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Whether an on-disk ELF still carries its own DWARF (a `.debug_info` section), so no separate
+/// debuginfo file is needed. A stripped binary lacks it; an unstripped one has it.
+fn has_debug_info(path: &Path) -> bool {
+    map_file(path)
+        .ok()
+        .and_then(|mmap| {
+            let elf = ElfFile64::<Endianness>::parse(&*mmap).ok()?;
+            Some(elf.section_by_name(".debug_info").is_some())
+        })
+        .unwrap_or(false)
+}
+
 /// Read an on-disk ELF's build-id and lowest `PT_LOAD` virtual address (its stated base).
 fn read_elf_info(path: &Path) -> Option<(Option<String>, u64)> {
     let mmap = map_file(path).ok()?;
@@ -308,7 +385,7 @@ fn hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::{fixture_path, load_core};
+    use crate::testutil::{TempDir, fixture_path, load_core};
 
     #[test]
     fn segv_map_resolves_crasher_with_exe_and_reads_build_id() {
@@ -340,6 +417,56 @@ mod tests {
         // A PIE loads at its base address, so the bias equals that address.
         assert_eq!(crasher.load_bias, crasher.base_avma);
         assert!(crasher.avma_range.contains(&crasher.base_avma));
+    }
+
+    #[test]
+    fn empty_debug_dir_leaves_module_unresolved() {
+        let core = load_core("segv");
+        let parsed = crate::core::parse(&core).expect("parse segv core");
+        // An empty debug store holds no build-id artifact, so with no --exe the crasher cannot
+        // be located; resolution must yield no files and must not panic.
+        let store = TempDir::new("empty-store");
+        let opts = TriageOptions {
+            debug_dirs: vec![store.path.clone()],
+            ..Default::default()
+        };
+        let map = build(&parsed, &core, &opts);
+        let crasher = map
+            .modules
+            .iter()
+            .find(|m| m.name == "crasher")
+            .expect("crasher module");
+        assert!(crasher.on_disk.is_none());
+        assert!(crasher.debug.is_none());
+    }
+
+    #[test]
+    fn resolves_crasher_by_build_id_and_leaves_debug_none() {
+        // The unstripped crasher carries its own DWARF, so once found by build-id its `debug`
+        // stays None (no separate debuginfo needed).
+        let core = load_core("segv");
+        let parsed = crate::core::parse(&core).expect("parse segv core");
+        let store = TempDir::new("buildid-maps");
+        store.put_build_id("crasher", "d16533ecc2349538fd0b48ca8bb08ced4ce96bff", "");
+        let opts = TriageOptions {
+            debug_dirs: vec![store.path.clone()],
+            ..Default::default()
+        };
+        let map = build(&parsed, &core, &opts);
+        let crasher = map
+            .modules
+            .iter()
+            .find(|m| m.name == "crasher")
+            .expect("crasher module");
+        assert!(
+            crasher.on_disk.is_some(),
+            "crasher found via build-id store"
+        );
+        assert!(crasher.debug.is_none(), "unstripped binary needs no .debug");
+        assert_eq!(
+            crasher.build_id.as_deref(),
+            Some("d16533ecc2349538fd0b48ca8bb08ced4ce96bff")
+        );
     }
 
     #[test]

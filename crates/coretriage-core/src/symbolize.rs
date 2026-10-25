@@ -70,29 +70,36 @@ impl Symbolizer {
         out
     }
 
-    /// Fetch (building and caching on first use) the symbol data for a module, or `None` when
-    /// it did not resolve to a readable on-disk file.
+    /// Fetch (building and caching on first use) the symbol data for a module, or `None` when it
+    /// resolved to no readable file. The DWARF is read from the separate debug file when the
+    /// module has one, else from the binary itself.
     fn module_symbols(&self, module: &ResolvedModule) -> Option<Arc<Mutex<ModuleSymbols>>> {
-        let path = module.on_disk.as_deref()?;
+        // The DWARF source: the split debug file when present, else the on-disk binary.
+        let dwarf_path = module.debug.as_deref().or(module.on_disk.as_deref())?;
         let key = module
             .build_id
             .clone()
-            .unwrap_or_else(|| path.to_string_lossy().into_owned());
+            .unwrap_or_else(|| dwarf_path.to_string_lossy().into_owned());
         if let Some(entry) = self.cache.lock().unwrap().get(&key) {
             return entry.clone();
         }
         // Build outside the cache lock: parsing DWARF is slow and must not block other modules.
-        let built = ModuleSymbols::load(path).map(|s| Arc::new(Mutex::new(s)));
+        let built = ModuleSymbols::load(module.on_disk.as_deref(), module.debug.as_deref())
+            .map(|s| Arc::new(Mutex::new(s)));
         self.cache.lock().unwrap().insert(key, built.clone());
         built
     }
 }
 
 impl ModuleSymbols {
-    /// Build symbol data from an on-disk ELF: an `addr2line::Context` over its DWARF plus its
-    /// function symbol table. Returns `None` if the file cannot be read or parsed.
-    fn load(path: &Path) -> Option<Self> {
-        let mmap = map_file(path).ok()?;
+    /// Build symbol data for a module: an `addr2line::Context` over its DWARF plus a function
+    /// symbol table for the no-DWARF fallback. The DWARF comes from the separate `debug` file
+    /// when the binary was stripped of it, else from `on_disk`. The symbol table prefers the
+    /// binary's own, falling back to the debug file's when the binary carries none. Returns
+    /// `None` if neither file is present or the DWARF source cannot be parsed.
+    fn load(on_disk: Option<&Path>, debug: Option<&Path>) -> Option<Self> {
+        let dwarf_path = debug.or(on_disk)?;
+        let mmap = map_file(dwarf_path).ok()?;
         let elf = ElfFile64::<Endianness>::parse(&*mmap).ok()?;
         let endian = if elf.is_little_endian() {
             RunTimeEndian::Little
@@ -110,10 +117,21 @@ impl ModuleSymbols {
         })
         .ok()?;
         let ctx = Context::from_dwarf(dwarf).ok()?;
-        Some(Self {
-            ctx,
-            symbols: load_symbols(&elf),
-        })
+
+        let symbols = if debug.is_none() {
+            // Non-split: the parsed ELF is the binary, so take its symbols from the same parse.
+            load_symbols(&elf)
+        } else {
+            // Split: prefer the binary's own symbol table, falling back to the (already-parsed)
+            // debug file's when the binary was stripped of its symtab too.
+            let from_binary = on_disk.and_then(load_symbols_at).unwrap_or_default();
+            if from_binary.is_empty() {
+                load_symbols(&elf)
+            } else {
+                from_binary
+            }
+        };
+        Some(Self { ctx, symbols })
     }
 
     /// Resolve a module-relative address into one or more frames (inlines included).
@@ -177,6 +195,14 @@ fn unknown_frame(module: Option<String>) -> Frame {
         file: None,
         line: None,
     }
+}
+
+/// Load an on-disk ELF's function symbols by path, for the split-debug symbol-table fallback.
+/// Returns `None` if the file cannot be read or parsed (an empty table is `Some(vec![])`).
+fn load_symbols_at(path: &Path) -> Option<Vec<FnSymbol>> {
+    let mmap = map_file(path).ok()?;
+    let elf = ElfFile64::<Endianness>::parse(&*mmap).ok()?;
+    Some(load_symbols(&elf))
 }
 
 /// Collect function symbols, sorted by address, for the nearest-symbol fallback.

@@ -24,6 +24,10 @@ struct Cli {
     /// Extra root to resolve recorded module paths against; repeatable.
     #[arg(long = "sysroot", value_name = "DIR")]
     sysroot: Vec<PathBuf>,
+    /// Debug store searched by GNU build-id (elfutils `.build-id` layout) for stripped
+    /// binaries and separate debuginfo; repeatable. Defaults to /usr/lib/debug.
+    #[arg(long = "debug-dir", value_name = "DIR")]
+    debug_dir: Vec<PathBuf>,
     /// Maximum number of frames to keep per thread; 0 keeps all.
     #[arg(long, default_value_t = 16)]
     top: usize,
@@ -65,6 +69,7 @@ fn main() -> ExitCode {
     let opts = TriageOptions {
         exe: cli.exe,
         sysroot: cli.sysroot,
+        debug_dirs: cli.debug_dir,
         top: cli.top,
     };
     let emitter = cli.format.emitter();

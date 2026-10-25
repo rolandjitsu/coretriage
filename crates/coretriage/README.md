@@ -22,8 +22,13 @@ Prebuilt binaries for Linux and macOS are attached to each
 ```sh
 coretriage core.1234                      # triage one core
 coretriage --exe ./target/release/app core.1234
+coretriage --debug-dir /usr/lib/debug core.1234   # find binaries by build-id
 coretriage cores/ --format json           # batch a directory, bucket, emit JSON
 ```
+
+A stripped production binary is located by its GNU build-id from a debug store
+(`--debug-dir`, repeatable; defaults to `/usr/lib/debug`), with its separate `.debug`
+file picked up from the same store, so cores symbolicate without `--exe`.
 
 A single core prints the fault, a stable signature, and the symbolicated backtrace (`#0` is the
 crash site, callers below it); a directory collapses to ranked, deduplicated crashes:

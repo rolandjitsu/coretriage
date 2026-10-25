@@ -85,8 +85,10 @@ GNU build-id) and, for `file:line`, its **DWARF** debug info.
   is the key that ties them together. Because it is derived from the binary's contents, any
   change that alters the binary (a source edit, different flags) yields a new build-id, while a
   byte-identical build yields the same one. coretriage checks it and warns on a mismatch.
-- **Stripped binary** (no DWARF): you still get function names from the ELF symbol table
-  (nearest-symbol fallback), but no source lines. Fully stripped: only raw addresses.
+- **Stripped binary** (no DWARF in the binary): when its separate `.debug` file is staged in a
+  debug store (resolved by build-id, elfutils `.build-id` layout), you get full `file:line` from
+  that DWARF. Without it, function names still come from the ELF symbol table (nearest-symbol
+  fallback) but no source lines. Fully stripped, no `.debug`: only raw addresses.
 - **Statically linked binary**: everything, including libc, is in one file, so the whole
   backtrace resolves from that single binary with no gaps.
 - **Dynamically linked, missing a library** (e.g. libc not present on the triage host): frames
