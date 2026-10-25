@@ -34,11 +34,12 @@ impl Emitter for TextEmitter {
 
     fn emit_buckets(&self, buckets: &[Bucket], out: &mut dyn Write) -> Result<()> {
         for (rank, bucket) in buckets.iter().enumerate() {
+            let count = bucket.count;
+            let noun = if count == 1 { "core" } else { "cores" };
             writeln!(
                 out,
-                "[{rank}] {count} cores  {hex}  {label}",
+                "[{rank}] {count} {noun}  {hex}  {label}",
                 rank = rank + 1,
-                count = bucket.count,
                 hex = bucket.signature.hex,
                 label = bucket.signature.label,
             )?;
@@ -171,6 +172,20 @@ mod tests {
             out.contains("[1] 312 cores  7f3a9c2e  SIGSEGV in Widget::render"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn text_buckets_say_core_for_a_count_of_one() {
+        let buckets = vec![Bucket {
+            signature: Signature {
+                hex: "abc".to_string(),
+                label: "SIGSEGV in app!boom".to_string(),
+            },
+            count: 1,
+            representative: sample_report(),
+        }];
+        let out = render(|w| TextEmitter.emit_buckets(&buckets, w));
+        assert!(out.contains("[1] 1 core  "), "{out}");
     }
 
     // Helpers after the tests that use them, per the house rules.
