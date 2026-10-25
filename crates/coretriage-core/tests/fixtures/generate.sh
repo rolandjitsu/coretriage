@@ -5,17 +5,18 @@
 # come out arm64 (Rosetta/qemu-user dump the translator, not the guest).
 #
 # It writes the C sources, compiles them, produces a crash core per fault mode
-# and a hang core, verifies them, and packs everything into
+# and a hang core, builds stripped + split-debug variants and an elfutils
+# debug store, verifies them, and packs everything into
 # coretriage-fixtures.tar.gz next to where you ran it, ready to copy back.
 #
-# Needs: gcc, gdb, binutils (readelf), file, tar. The crash cores set
+# Needs: gcc, gdb, binutils (readelf, strip, objcopy), file, tar. The crash cores set
 # kernel.core_pattern, which needs root; the script saves and restores the
 # original and prompts for sudo. Without sudo it falls back to gdb-generated
 # cores (slightly different from kernel cores, but fine as fixtures).
 set -euo pipefail
 
 need() { command -v "$1" >/dev/null || { echo "missing tool: $1 (install gcc gdb binutils file)"; exit 1; }; }
-need gcc; need gdb; need readelf; need file; need tar
+need gcc; need gdb; need readelf; need strip; need objcopy; need file; need tar
 
 START="$PWD"
 OUT="$(mktemp -d)"
@@ -87,6 +88,29 @@ echo "=== compile ==="
 gcc -g -O0 -fno-omit-frame-pointer -o crasher crasher.c
 gcc -g -O0 -fno-omit-frame-pointer -pthread -o hang hang.c
 
+echo "=== split-debug variants + debug store ==="
+# For each binary, split the DWARF into a .debug file and strip the binary of it
+# (strip --strip-debug keeps .eh_frame, .symtab, and the build-id), then lay both
+# out in an elfutils debug store keyed by build-id:
+#   debugstore/.build-id/<ab>/<rest>        the stripped executable (for unwinding)
+#   debugstore/.build-id/<ab>/<rest>.debug  the separated DWARF (for symbolication)
+mkdir -p debugstore/.build-id
+make_split() {
+    local bin="$1" bid ab rest
+    bid="$(readelf -n "$bin" | awk '/Build ID/ {print $NF; exit}')"
+    [ -n "$bid" ] || { echo "no build-id for $bin"; exit 1; }
+    objcopy --only-keep-debug "$bin" "$bin.debug"
+    cp "$bin" "$bin.stripped"
+    strip --strip-debug "$bin.stripped"
+    ab="${bid:0:2}"; rest="${bid:2}"
+    mkdir -p "debugstore/.build-id/$ab"
+    cp "$bin.stripped" "debugstore/.build-id/$ab/$rest"
+    cp "$bin.debug"    "debugstore/.build-id/$ab/$rest.debug"
+    echo "  $bin ($bid) -> $bin.stripped, $bin.debug, debugstore/.build-id/$ab/{$rest,$rest.debug}"
+}
+make_split crasher
+make_split hang
+
 echo "=== crash cores ==="
 if ORIG="$(cat /proc/sys/kernel/core_pattern)" \
    && echo 'core.%e.%p' | sudo tee /proc/sys/kernel/core_pattern >/dev/null 2>&1; then
@@ -123,10 +147,15 @@ gdb -batch -ex bt crasher segv.core 2>/dev/null | head -20
 
 echo "=== sizes ==="
 ls -la crasher.c hang.c crasher hang segv.core abort.core hang.core
+ls -la crasher.stripped crasher.debug hang.stripped hang.debug
+find debugstore -type f -exec ls -la {} +
 
 echo "=== pack ==="
 TARBALL="$START/coretriage-fixtures.tar.gz"
-tar czf "$TARBALL" crasher.c hang.c crasher hang segv.core abort.core hang.core
+tar czf "$TARBALL" \
+    crasher.c hang.c crasher hang \
+    crasher.stripped crasher.debug hang.stripped hang.debug debugstore \
+    segv.core abort.core hang.core
 echo
 echo "DONE. Copy this back to your Mac: $TARBALL"
 ls -la "$TARBALL"
