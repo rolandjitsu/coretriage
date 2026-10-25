@@ -37,7 +37,8 @@ coretriage --exe ./target/release/app --sysroot ./sysroot core.1234
 ```
 
 A crash core (a fatal signal) and a hang core (captured with `gcore`) triage the same way; the
-report's fault is `Signal(n)` for the former and `Hang` for the latter:
+report's fault is a `signal` (with its number and faulting address) for the former and a `hang`
+for the latter:
 
 ```sh
 kill -SEGV "$pid"          # or let it crash; produces core.<pid>
@@ -55,6 +56,59 @@ coretriage cores/                 # text report, ranked buckets
 coretriage cores/ --format json   # machine-readable
 coretriage cores/ --top 32        # keep more frames per thread
 ```
+
+## Example
+
+A single crash core, pointing `--exe` at the matching binary:
+
+```text
+$ coretriage core.1234 --exe ./app
+fault: signal 11 (SIGSEGV) at 0x0
+signature: 6ae8cbf38275b439  SIGSEGV in app!render_widget
+* thread 4213
+    #0 app!render_widget (src/widget.c:88)
+    #1 app!tick          (src/app.c:120)
+    #2 app!main          (src/main.c:42)
+    #3 libc.so.6!<unknown>
+```
+
+`#0` is the innermost frame (where it crashed); each line below is its caller, out to `main`.
+`signature` is a stable hash of the normalized stack, so the same bug groups together.
+
+A directory of cores collapses to ranked, deduplicated crashes:
+
+```text
+$ coretriage cores/
+[1] 312 cores  6ae8cbf38275b439  SIGSEGV in app!render_widget
+[2]  71 cores  a1b0ff45c3d2e817  SIGABRT in app!check_invariant
+[3]   4 cores  c9d2e8107f4a1b60  hang: 12 threads in pthread_cond_wait
+```
+
+`--format json` gives the same data machine-readably on stdout (logs go to stderr), ready to
+pipe into `jq`, a dashboard, or CI.
+
+## When to use coretriage
+
+Use **coretriage** when you have many cores or want automation:
+
+- **A pile of cores** - CI dumped 500 overnight and you want the handful of distinct bugs,
+  ranked by frequency, not 500 debugger sessions.
+- **Tracking crashes over time** - the stable signature lets you dedup, count, and alert when a
+  new signature appears or one spikes.
+- **Automation** - headless, no debugger, clean JSON on stdout for CI, a dashboard, or (soon)
+  OpenTelemetry. It is also a library you can embed.
+- **Hangs** - `gcore` a stuck process and get an all-thread fingerprint of where it is parked.
+
+Use **gdb** / lldb / `coredumpctl` / Breakpad / Sentry when:
+
+- **Debugging one core deeply** - inspecting variables, memory, and registers, evaluating
+  expressions, or stepping is a debugger's job; coretriage only reports backtraces.
+- **You already collect minidumps** - if you ship a Breakpad/Crashpad client, use that
+  pipeline; coretriage reads raw ELF cores, not minidumps.
+- **A quick one-off** - for a single core in front of you, `gdb ./app core` is hard to beat.
+
+In short: coretriage is for **triage and aggregation across many cores**; gdb is for **deep,
+interactive debugging of one**.
 
 ## How it works
 
@@ -80,6 +134,9 @@ The pipeline runs in stages, each a module in `coretriage-core`:
 6. **Aggregate and report** (`aggregate`, `report`). Group reports by signature with a
    representative and a count (the batch runs cores in parallel with `rayon`), then render as
    text or JSON.
+
+See [docs/architecture.md](./docs/architecture.md) for a flow diagram, the address model, and a
+concepts glossary.
 
 ## Scope
 
