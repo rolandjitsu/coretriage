@@ -51,6 +51,19 @@ impl TempDir {
         std::fs::write(&dest, load_core(name)).expect("write temp core");
         dest
     }
+
+    /// Place a copy of a committed fixture into this directory as a build-id artifact, in the
+    /// elfutils `.build-id/<ab>/<rest><suffix>` layout, so the directory acts as a debug store.
+    /// `suffix` is empty for the executable or `.debug` for separated debuginfo. Returns the
+    /// artifact's path.
+    pub fn put_build_id(&self, fixture: &str, build_id: &str, suffix: &str) -> PathBuf {
+        let (ab, rest) = build_id.split_at(2);
+        let dir = self.path.join(".build-id").join(ab);
+        std::fs::create_dir_all(&dir).expect("create build-id dir");
+        let dest = dir.join(format!("{rest}{suffix}"));
+        std::fs::copy(fixture_path(fixture), &dest).expect("copy fixture into build-id store");
+        dest
+    }
 }
 
 impl Drop for TempDir {

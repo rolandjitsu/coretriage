@@ -120,14 +120,17 @@ The pipeline runs in stages, each a module in `coretriage-core`:
    read lazily rather than loaded in full.
 2. **Build the module map** (`maps`). Turn the `NT_FILE` entries, plus any `--exe` and
    `--sysroot` overrides, into resolved modules with load biases and, where present, GNU
-   build-ids.
+   build-ids. A binary not found by path is looked up by its build-id in a debug store
+   (`--debug-dir`, the elfutils `.build-id` layout), and a stripped binary's separate `.debug`
+   file is resolved the same way.
 3. **Unwind** (`unwind`). Starting from each thread's `NT_PRSTATUS` registers, walk the stack
    with DWARF call-frame information via `framehop`, reading stack and register memory from the
    core image.
 4. **Symbolicate** (`symbolize`). Map each return address back to its module and resolve
    function name and source file/line from the module's DWARF with `addr2line` (an
-   `addr2line::Context` cached per build-id), demangling Rust (`rustc-demangle`) and C++
-   (`cpp_demangle`) symbols.
+   `addr2line::Context` cached per build-id, read from the separate `.debug` file when the binary
+   was stripped of its DWARF), demangling Rust (`rustc-demangle`) and C++ (`cpp_demangle`)
+   symbols.
 5. **Signature** (`signature`). Normalize the crashing thread's backtrace - drop offsets and
    non-deterministic frames - and hash it with BLAKE3 into a stable fingerprint, so the same bug
    yields the same signature across cores.
@@ -140,16 +143,17 @@ concepts glossary.
 
 ## Roadmap
 
-**Today (v0.1).** coretriage handles **Linux x86_64 ELF cores**, for both crashes (a fatal
-signal) and hangs. Modules are resolved from the core's `NT_FILE` table and from explicit
-`--exe` / `--sysroot` paths you give it, and output is text or JSON.
+**Today (v0.2).** coretriage handles **Linux x86_64 ELF cores**, for both crashes (a fatal
+signal) and hangs. Modules are resolved from the core's `NT_FILE` table, from explicit `--exe` /
+`--sysroot` paths, and by GNU build-id from a local debug store (`--debug-dir`, the elfutils
+`.build-id` layout), including separate `.debug` files for stripped binaries, so a stripped
+production binary symbolicates without `--exe`. Output is text or JSON.
 
 Planned, roughly in order:
 
-- **Automatic debug-info resolution** - look binaries up by GNU build-id (a local debug store
-  and `debuginfod`), so stripped production binaries symbolicate without `--exe`.
-- **More architectures and split debuginfo** - aarch64 cores (the unwinder already handles the
-  arch) and separate `.debug` stores keyed by build-id.
+- **debuginfod** - fetch missing binaries and debuginfo by build-id from a `debuginfod` server
+  (behind a cargo feature, off by default), so cores symbolicate with nothing staged locally.
+- **More architectures** - aarch64 cores (the unwinder already handles the arch).
 - **More output formats.** Output is layered: the pipeline produces the data model and the
   `report` module renders it through an `Emitter`, so a new format is one more emitter, not a
   change to the pipeline.

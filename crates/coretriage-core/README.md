@@ -7,7 +7,8 @@ The library behind [`coretriage`](https://crates.io/crates/coretriage). It triag
 ELF core dumps offline - crashes and hangs alike:
 
 - parse the core (`PT_LOAD` memory image, `NT_PRSTATUS` threads, `NT_FILE` module map);
-- build the module map from the core plus `--exe` / `--sysroot` overrides;
+- build the module map from the core plus `--exe` / `--sysroot` overrides, resolving stripped
+  binaries and separate `.debug` files by GNU build-id from a debug store (`--debug-dir`);
 - unwind each thread's stack with DWARF call-frame info (`framehop`);
 - symbolicate frames via `addr2line` (function, file, line; Rust and C++ demangled);
 - normalize the crashing backtrace and hash it (BLAKE3) into a stable signature;

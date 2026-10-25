@@ -44,6 +44,9 @@ pub struct TriageOptions {
     pub exe: Option<PathBuf>,
     /// Extra roots to resolve recorded module paths against (sysroots, debug stores).
     pub sysroot: Vec<PathBuf>,
+    /// Debug stores searched by GNU build-id, in the elfutils `.build-id` layout, for stripped
+    /// binaries and their separated debuginfo. When empty, `/usr/lib/debug` is used.
+    pub debug_dirs: Vec<PathBuf>,
     /// Maximum number of frames to keep per thread; 0 means keep all.
     pub top: usize,
 }
@@ -137,6 +140,7 @@ fn triage_with(
             base = m.base_avma,
             load_bias = m.load_bias,
             on_disk = ?m.on_disk,
+            debug = ?m.debug,
             build_id = ?m.build_id,
             "resolved module",
         );
@@ -242,6 +246,42 @@ mod tests {
                 "unexpected file: {:?}",
                 frame.file
             );
+        }
+    }
+
+    #[test]
+    fn segv_backtrace_resolves_by_build_id_without_exe() {
+        // A debug store holding the crasher binary under its build-id, elfutils layout.
+        let store = TempDir::new("buildid-store");
+        store.put_build_id("crasher", "d16533ecc2349538fd0b48ca8bb08ced4ce96bff", "");
+
+        let dir = TempDir::new("segv-buildid");
+        let core = dir.put_core("segv");
+        // No --exe: the crasher must be located by its build-id from the debug store alone,
+        // driven by the build-id recorded in the core image.
+        let opts = TriageOptions {
+            debug_dirs: vec![store.path.clone()],
+            top: 0,
+            ..Default::default()
+        };
+        let report = triage(&core, &opts).expect("triage segv core");
+
+        let tid = report.crashing_tid.expect("a crashing thread");
+        let thread = report
+            .threads
+            .iter()
+            .find(|t| t.tid == tid)
+            .expect("crashing thread in report");
+
+        let top: Vec<&str> = thread
+            .frames
+            .iter()
+            .take(4)
+            .map(|f| f.function.as_deref().unwrap_or("?"))
+            .collect();
+        assert_eq!(top, vec!["gamma_segv", "beta", "alpha", "main"]);
+        for frame in thread.frames.iter().take(4) {
+            assert_eq!(frame.module.as_deref(), Some("crasher"));
         }
     }
 
