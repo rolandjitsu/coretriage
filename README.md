@@ -138,32 +138,36 @@ The pipeline runs in stages, each a module in `coretriage-core`:
 See [docs/architecture.md](./docs/architecture.md) for a flow diagram, the address model, and a
 concepts glossary.
 
-## Scope
+## Roadmap
 
-v0.1 targets **Linux x86_64 ELF cores**. Modules are resolved from the core's `NT_FILE` table
-and from explicit `--exe` / `--sysroot` paths you provide; automatic build-id lookup and
-`debuginfod` fetching come later. Other architectures (aarch64) and split-debuginfo stores are
-on the roadmap, not in v0.1.
+**Today (v0.1).** coretriage handles **Linux x86_64 ELF cores**, for both crashes (a fatal
+signal) and hangs. Modules are resolved from the core's `NT_FILE` table and from explicit
+`--exe` / `--sysroot` paths you give it, and output is text or JSON.
 
-## Roadmap: output formats
+Planned, roughly in order:
 
-Output is layered - the pipeline produces the data model and the `report` module renders it
-through an `Emitter`, so a new format is one more emitter, not a change to the pipeline. v0.1 ships
-text and JSON. Planned, in rough order of value:
-
-- **Folded stacks / flame graph.** Emit Brendan Gregg folded-stack format to pipe into `inferno`
-  or any flame-graph tool. A crash flame graph shows where crashes concentrate; for a hang, an
-  all-thread merged graph shows where every thread is parked.
-- **pprof.** A bucket is a weighted stack sample, exactly what pprof encodes, so crash frequency
-  can be explored in Pyroscope, Parca, or Grafana. This is also the natural OpenTelemetry fit, as
-  its profiling signal is pprof-based.
-- **OpenTelemetry events and metrics.** Emit each bucket as a structured event or counter
-  (signature, signal, top frame, build-id, count) to track crash signatures over time and alert
-  when a new one appears or a rate spikes.
+- **Automatic debug-info resolution** - look binaries up by GNU build-id (a local debug store
+  and `debuginfod`), so stripped production binaries symbolicate without `--exe`.
+- **More architectures and split debuginfo** - aarch64 cores (the unwinder already handles the
+  arch) and separate `.debug` stores keyed by build-id.
+- **More output formats.** Output is layered: the pipeline produces the data model and the
+  `report` module renders it through an `Emitter`, so a new format is one more emitter, not a
+  change to the pipeline.
+  - **Folded stacks / flame graph** - Brendan Gregg folded format to pipe into `inferno` or any
+    flame-graph tool; a crash flame graph shows where crashes concentrate, and for a hang an
+    all-thread merged graph shows where every thread is parked.
+  - **pprof** - a bucket is a weighted stack sample, exactly what pprof encodes, so crash
+    frequency can be explored in Pyroscope, Parca, or Grafana (also the natural OpenTelemetry
+    fit, since its profiling signal is pprof-based).
+  - **OpenTelemetry events and metrics** - emit each bucket as a structured event or counter
+    (signature, signal, top frame, build-id, count) to track crash signatures over time and
+    alert when a new one appears or a rate spikes.
+- **A crash-watcher agent** - a node-level service (systemd or a k8s DaemonSet) that consumes
+  captured cores, triages them, and emits the above to your observability stack.
 
 The CLI stays offline: it writes files other tools ingest rather than embedding an exporter; a
-direct `--otel <endpoint>` exporter may come later behind a feature flag. Traces and spans are not
-a target - a backtrace has no causal or temporal structure to map onto a span tree.
+direct `--otel <endpoint>` exporter may come later behind a feature flag. Traces and spans are
+not a target - a backtrace has no causal or temporal structure to map onto a span tree.
 
 ## License
 
