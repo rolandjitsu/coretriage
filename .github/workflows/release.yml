@@ -1,8 +1,9 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
+  # Manual only: start a release from the Actions tab when you want one. knope still
+  # computes the version from the conventional commits since the last release.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -46,11 +47,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
       # knope bumps the version, updates the changelog, tags, and creates the GitHub
-      # release from the conventional commits since the last tag. The push uses the app
-      # token, so - unlike the built-in token - it retriggers this workflow; that rerun
-      # finds no releasable commits and no-ops via `no_release`, so the publish jobs below
-      # run only in the run that actually released. `no_release` is a normal no-op, not a
-      # failure.
+      # release from the conventional commits since the last tag. The app token lets the
+      # version-bump push bypass the branch ruleset. The workflow is manual
+      # (workflow_dispatch), so that push does not start another run; the publish jobs below
+      # run in this same run. `no_release` (no releasable commits) is a normal no-op.
       - name: Release
         id: release
         env:
