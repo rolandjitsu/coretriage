@@ -28,6 +28,10 @@ struct Cli {
     /// binaries and separate debuginfo; repeatable. Defaults to /usr/lib/debug.
     #[arg(long = "debug-dir", value_name = "DIR")]
     debug_dir: Vec<PathBuf>,
+    /// Fetch missing binaries and debuginfo by build-id from a debuginfod server
+    /// ($DEBUGINFOD_URLS). Requires a build with --features debuginfod.
+    #[arg(long)]
+    debuginfod: bool,
     /// Maximum number of frames to keep per thread; 0 keeps all.
     #[arg(long, default_value_t = 16)]
     top: usize,
@@ -66,10 +70,21 @@ fn main() -> ExitCode {
         .with_writer(std::io::stderr)
         .init();
 
+    // --debuginfod is always accepted so its help is visible, but it only works in a build with
+    // the feature; otherwise fail loudly rather than silently ignoring it.
+    #[cfg(not(feature = "debuginfod"))]
+    if cli.debuginfod {
+        eprintln!(
+            "coretriage: built without debuginfod support; rebuild with --features debuginfod"
+        );
+        return ExitCode::FAILURE;
+    }
+
     let opts = TriageOptions {
         exe: cli.exe,
         sysroot: cli.sysroot,
         debug_dirs: cli.debug_dir,
+        debuginfod: cli.debuginfod,
         top: cli.top,
     };
     let emitter = cli.format.emitter();

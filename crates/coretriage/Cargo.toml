@@ -20,6 +20,10 @@ bin-dir = "{ bin }{ binary-ext }"
 name = "coretriage"
 path = "src/main.rs"
 
+[features]
+# Surface coretriage-core's debuginfod support through the CLI's --debuginfod flag.
+debuginfod = ["coretriage-core/debuginfod"]
+
 [dependencies]
 coretriage-core = { workspace = true }
 clap.workspace = true

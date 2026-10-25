@@ -147,12 +147,12 @@ concepts glossary.
 signal) and hangs. Modules are resolved from the core's `NT_FILE` table, from explicit `--exe` /
 `--sysroot` paths, and by GNU build-id from a local debug store (`--debug-dir`, the elfutils
 `.build-id` layout), including separate `.debug` files for stripped binaries, so a stripped
-production binary symbolicates without `--exe`. Output is text or JSON.
+production binary symbolicates without `--exe`. A `debuginfod` cargo feature (off by default)
+adds `--debuginfod` to fetch missing binaries and debuginfo by build-id from a `debuginfod`
+server (`$DEBUGINFOD_URLS`) when the local stores miss. Output is text or JSON.
 
 Planned, roughly in order:
 
-- **debuginfod** - fetch missing binaries and debuginfo by build-id from a `debuginfod` server
-  (behind a cargo feature, off by default), so cores symbolicate with nothing staged locally.
 - **More architectures** - aarch64 cores (the unwinder already handles the arch).
 - **More output formats.** Output is layered: the pipeline produces the data model and the
   `report` module renders it through an `Emitter`, so a new format is one more emitter, not a

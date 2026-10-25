@@ -28,7 +28,9 @@ coretriage cores/ --format json           # batch a directory, bucket, emit JSON
 
 A stripped production binary is located by its GNU build-id from a debug store
 (`--debug-dir`, repeatable; defaults to `/usr/lib/debug`), with its separate `.debug`
-file picked up from the same store, so cores symbolicate without `--exe`.
+file picked up from the same store, so cores symbolicate without `--exe`. Built with
+`--features debuginfod`, `--debuginfod` also fetches missing binaries and debuginfo by
+build-id from a `debuginfod` server (`$DEBUGINFOD_URLS`) when the local stores miss.
 
 A single core prints the fault, a stable signature, and the symbolicated backtrace (`#0` is the
 crash site, callers below it); a directory collapses to ranked, deduplicated crashes:
