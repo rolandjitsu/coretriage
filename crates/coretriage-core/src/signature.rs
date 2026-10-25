@@ -243,6 +243,7 @@ mod tests {
             },
             crashing_tid: Some(1),
             threads: vec![thread(1, frames)],
+            signature: Signature::default(),
         }
     }
 
@@ -251,6 +252,7 @@ mod tests {
             fault: FaultKind::Hang,
             crashing_tid: None,
             threads,
+            signature: Signature::default(),
         }
     }
 

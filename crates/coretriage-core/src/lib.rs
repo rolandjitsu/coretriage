@@ -72,8 +72,11 @@ pub fn triage(core_path: &Path, opts: &TriageOptions) -> Result<CrashReport> {
 pub fn triage_bytes(data: &[u8], opts: &TriageOptions) -> Result<CrashReport> {
     let symbolizer = crate::symbolize::Symbolizer::new();
     let report = triage_with(data, opts, &symbolizer)?;
-    let signature = crate::signature::compute(&report, opts.top);
-    tracing::debug!(hex = %signature.hex, label = %signature.label, "crash signature");
+    tracing::debug!(
+        hex = %report.signature.hex,
+        label = %report.signature.label,
+        "crash signature"
+    );
     Ok(report)
 }
 
@@ -96,14 +99,11 @@ pub fn triage_batch(dir: &Path, opts: &TriageOptions) -> Result<Vec<Bucket>> {
 
     // One symbolizer shared across cores so each module's DWARF is parsed once for the batch.
     let symbolizer = crate::symbolize::Symbolizer::new();
-    let reports: Vec<(Signature, CrashReport)> = paths
+    let reports: Vec<CrashReport> = paths
         .par_iter()
         .filter_map(|path| match std::fs::read(path) {
             Ok(data) => match triage_with(&data, opts, &symbolizer) {
-                Ok(report) => {
-                    let signature = crate::signature::compute(&report, opts.top);
-                    Some((signature, report))
-                }
+                Ok(report) => Some(report),
                 Err(err) => {
                     tracing::warn!(core = %path.display(), %err, "skipping core that failed to parse");
                     None
@@ -158,11 +158,14 @@ fn triage_with(
             }
         })
         .collect();
-    Ok(CrashReport {
+    let mut report = CrashReport {
         fault: parsed.fault,
         threads,
         crashing_tid: parsed.crashing_tid,
-    })
+        signature: Signature::default(),
+    };
+    report.signature = crate::signature::compute(&report, opts.top);
+    Ok(report)
 }
 
 #[cfg(test)]

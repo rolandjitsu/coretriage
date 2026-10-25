@@ -92,6 +92,11 @@ fn write_report(report: &CrashReport, out: &mut dyn Write) -> Result<()> {
         }
         FaultKind::Hang => writeln!(out, "fault: hang (no fatal signal)")?,
     }
+    writeln!(
+        out,
+        "signature: {}  {}",
+        report.signature.hex, report.signature.label
+    )?;
     for thread in &report.threads {
         let marker = if Some(thread.tid) == report.crashing_tid {
             "* "
@@ -141,6 +146,10 @@ mod tests {
         let report = sample_report();
         let out = render(|w| TextEmitter.emit_report(&report, w));
         assert!(out.contains("signal 11 (SIGSEGV) at 0x0"), "{out}");
+        assert!(
+            out.contains("signature: 7f3a9c2e  SIGSEGV in app!Widget::render"),
+            "{out}"
+        );
         assert!(out.contains("* thread 42 (worker)"), "{out}");
         assert!(
             out.contains("#0 app!Widget::render (src/widget.rs:88)"),
@@ -214,6 +223,10 @@ mod tests {
                     },
                 ],
             }],
+            signature: Signature {
+                hex: "7f3a9c2e".to_string(),
+                label: "SIGSEGV in app!Widget::render".to_string(),
+            },
         }
     }
 

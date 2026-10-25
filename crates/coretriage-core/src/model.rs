@@ -69,10 +69,12 @@ pub struct CrashReport {
     pub threads: Vec<ThreadReport>,
     /// TID of the crashing (or stalled) thread, when one can be identified.
     pub crashing_tid: Option<i32>,
+    /// Stable fingerprint of this crash, for dedup and tracking over time.
+    pub signature: Signature,
 }
 
 /// A stable fingerprint of a crash, used to group cores that share a root cause.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Signature {
     /// Hex-encoded hash of the normalized crashing backtrace.
     pub hex: String,
