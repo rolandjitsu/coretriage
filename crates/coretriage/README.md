@@ -1,7 +1,6 @@
 # coretriage
 
 [![crates.io](https://img.shields.io/crates/v/coretriage?style=flat-square)](https://crates.io/crates/coretriage)
-[![docs.rs](https://img.shields.io/docsrs/coretriage?style=flat-square)](https://docs.rs/coretriage)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](https://github.com/rolandjitsu/coretriage/blob/main/LICENSE)
 
 Triage Linux ELF core dumps offline: unwind every thread, symbolicate the frames, compute a

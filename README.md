@@ -3,7 +3,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/rolandjitsu/coretriage/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/rolandjitsu/coretriage/actions/workflows/ci.yml)
 [![Coverage](https://img.shields.io/codecov/c/github/rolandjitsu/coretriage/main?style=flat-square)](https://codecov.io/gh/rolandjitsu/coretriage)
 [![crates.io](https://img.shields.io/crates/v/coretriage?style=flat-square)](https://crates.io/crates/coretriage)
-[![docs.rs](https://img.shields.io/docsrs/coretriage?style=flat-square)](https://docs.rs/coretriage)
+[![docs.rs](https://img.shields.io/docsrs/coretriage-core?style=flat-square&label=docs.rs)](https://docs.rs/coretriage-core)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](./LICENSE)
 
 Triage raw Linux ELF core dumps offline: parse the core, unwind every thread, symbolicate the
