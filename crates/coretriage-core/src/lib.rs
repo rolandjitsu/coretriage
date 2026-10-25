@@ -24,6 +24,8 @@ pub mod model;
 
 mod aggregate;
 mod core;
+#[cfg(feature = "debuginfod")]
+mod debuginfod;
 mod maps;
 pub mod report;
 mod signature;
@@ -47,6 +49,10 @@ pub struct TriageOptions {
     /// Debug stores searched by GNU build-id, in the elfutils `.build-id` layout, for stripped
     /// binaries and their separated debuginfo. When empty, `/usr/lib/debug` is used.
     pub debug_dirs: Vec<PathBuf>,
+    /// Fetch missing binaries and debuginfo by build-id from a debuginfod server (from
+    /// `$DEBUGINFOD_URLS`), after the local debug stores miss. Consulted only when the crate was
+    /// built with the `debuginfod` feature; otherwise it has no effect.
+    pub debuginfod: bool,
     /// Maximum number of frames to keep per thread; 0 means keep all.
     pub top: usize,
 }

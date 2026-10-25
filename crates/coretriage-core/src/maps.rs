@@ -123,11 +123,12 @@ pub(crate) fn build(parsed: &ParsedCore, core: &[u8], opts: &TriageOptions) -> M
                 .and_then(|(id, _)| id)
         });
 
-        // Not found by path: look the executable up by build-id in the debug stores.
+        // Not found by path: look the executable up by build-id, in the debug stores and then
+        // (with the debuginfod feature) a debuginfod server.
         if on_disk.is_none()
             && let Some(id) = &driving_id
         {
-            on_disk = resolve_build_id_file(&debug_dirs, id, "");
+            on_disk = resolve_executable(&debug_dirs, id, opts);
         }
 
         let (build_id, min_svma) = match on_disk.as_deref().and_then(read_elf_info) {
@@ -138,11 +139,11 @@ pub(crate) fn build(parsed: &ParsedCore, core: &[u8], opts: &TriageOptions) -> M
         let load_bias = base_avma.saturating_sub(min_svma);
 
         // The DWARF: the binary itself when it still carries `.debug_info`, else the separate
-        // `.debug` file keyed by the same build-id in a debug store.
+        // `.debug` file keyed by the same build-id (debug stores, then debuginfod).
         let debug = if on_disk.as_deref().is_some_and(has_debug_info) {
             None
         } else if let Some(id) = &driving_id {
-            resolve_build_id_file(&debug_dirs, id, ".debug")
+            resolve_debug(&debug_dirs, id, opts)
         } else {
             None
         };
@@ -289,6 +290,42 @@ fn resolve_build_id_file(debug_dirs: &[PathBuf], build_id: &str, suffix: &str) -
             return Some(candidate);
         }
     }
+    None
+}
+
+/// Locate the executable for a build-id: the debug stores first, then (with the `debuginfod`
+/// feature and when `opts.debuginfod` is set) a debuginfod server.
+fn resolve_executable(
+    debug_dirs: &[PathBuf],
+    build_id: &str,
+    opts: &TriageOptions,
+) -> Option<PathBuf> {
+    if let Some(local) = resolve_build_id_file(debug_dirs, build_id, "") {
+        return Some(local);
+    }
+    #[cfg(feature = "debuginfod")]
+    if opts.debuginfod {
+        return crate::debuginfod::fetch(build_id, crate::debuginfod::Artifact::Executable);
+    }
+    // `opts` is consulted only with the debuginfod feature built in.
+    #[cfg(not(feature = "debuginfod"))]
+    let _ = opts;
+    None
+}
+
+/// Locate the separate debuginfo for a build-id: the debug stores first, then (with the
+/// `debuginfod` feature and when `opts.debuginfod` is set) a debuginfod server.
+fn resolve_debug(debug_dirs: &[PathBuf], build_id: &str, opts: &TriageOptions) -> Option<PathBuf> {
+    if let Some(local) = resolve_build_id_file(debug_dirs, build_id, ".debug") {
+        return Some(local);
+    }
+    #[cfg(feature = "debuginfod")]
+    if opts.debuginfod {
+        return crate::debuginfod::fetch(build_id, crate::debuginfod::Artifact::Debuginfo);
+    }
+    // `opts` is consulted only with the debuginfod feature built in.
+    #[cfg(not(feature = "debuginfod"))]
+    let _ = opts;
     None
 }
 

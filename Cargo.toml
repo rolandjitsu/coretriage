@@ -47,6 +47,11 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+# Optional debuginfod client, pulled in only by coretriage-core's `debuginfod` feature so the
+# base build stays offline and free of it. A small blocking HTTP client; ureq's default features
+# give rustls+ring TLS (debuginfod servers are HTTPS) and gzip for compressed responses.
+ureq = { version = "3" }
+
 # Dev. criterion trimmed to the bench harness only; no plotting backend.
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 proptest = "1"

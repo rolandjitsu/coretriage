@@ -92,8 +92,9 @@ GNU build-id) and, for `file:line`, its **DWARF** debug info.
 - **Statically linked binary**: everything, including libc, is in one file, so the whole
   backtrace resolves from that single binary with no gaps.
 - **Dynamically linked, missing a library** (e.g. libc not present on the triage host): frames
-  in that library show as `libc.so.6!<unknown>`. This is expected; ship or fetch the library
-  (by build-id) to resolve them.
+  in that library show as `libc.so.6!<unknown>`. This is expected; stage the library in a debug
+  store by build-id (`--debug-dir`), or build with the `debuginfod` feature and pass
+  `--debuginfod` to fetch it from a `debuginfod` server, to resolve them.
 
 ## The signature
 

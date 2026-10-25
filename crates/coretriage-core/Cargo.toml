@@ -13,6 +13,11 @@ readme = "README.md"
 # Build the full API on docs.rs, including every optional feature.
 all-features = true
 
+[features]
+# Fetch missing binaries and debuginfo by build-id from a debuginfod server. Off by default so
+# the base build is offline and does not pull `ureq`.
+debuginfod = ["dep:ureq"]
+
 [dependencies]
 object.workspace = true
 gimli.workspace = true
@@ -27,6 +32,7 @@ blake3.workspace = true
 cpp_demangle.workspace = true
 rustc-demangle.workspace = true
 tracing.workspace = true
+ureq = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion.workspace = true
