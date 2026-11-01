@@ -86,6 +86,9 @@ jobs:
     if: needs.release.outputs.released == 'true'
     permissions:
       contents: write
+      # Keyless build-provenance attestation (SLSA) via OIDC; no stored signing key.
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -105,8 +108,16 @@ jobs:
           target: ${{ matrix.target }}
           archive: $bin-$target
           tar: unix
+          # Upload a per-asset SHA-256 checksum (coretriage-<target>.tar.gz.sha256).
+          checksum: sha256
           ref: refs/tags/v${{ needs.release.outputs.version }}
           token: ${{ secrets.GITHUB_TOKEN }}
+      # Attest that this workflow built the archive. The action leaves it in the workspace as
+      # coretriage-<target>.tar.gz; `gh attestation verify <file> --repo <owner>/<repo>` checks it.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: coretriage-${{ matrix.target }}.tar.gz
 
   # Publish the crates to crates.io in dependency order (coretriage-core before
   # coretriage), in the same run that cut the release, via trusted publishing: the OIDC
