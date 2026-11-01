@@ -34,6 +34,14 @@ impl ModuleMap {
     }
 }
 
+impl ResolvedModule {
+    /// Whether symbolication can name this module's frames: a local file was found carrying DWARF
+    /// (in the binary itself or a separate `.debug`).
+    pub(crate) fn has_symbols(&self) -> bool {
+        self.on_disk.as_deref().is_some_and(has_debug_info) || self.debug.is_some()
+    }
+}
+
 /// One mapped file, resolved to an on-disk path where possible.
 pub(crate) struct ResolvedModule {
     /// Short name for reports, the recorded path's final component (e.g. `libc.so.6`).
@@ -160,6 +168,10 @@ pub(crate) fn build(parsed: &ParsedCore, core: &[u8], opts: &TriageOptions) -> M
                 "build-id mismatch; symbolication may be wrong"
             );
         }
+
+        // Report the on-disk build-id, or - when the module was not found on this machine - the
+        // one recorded in the core, so a user knows which build's debug info to fetch.
+        let build_id = build_id.or(in_core);
 
         modules.push(ResolvedModule {
             name,
@@ -586,9 +598,13 @@ mod tests {
             .iter()
             .find(|m| m.name == "crasher")
             .expect("crasher module");
-        // The recorded /tmp path does not exist here, so without --exe there is no file.
+        // The recorded /tmp path does not exist here, so without --exe there is no file, but the
+        // build-id recorded in the core is still surfaced so the right build can be fetched.
         assert!(crasher.on_disk.is_none());
-        assert!(crasher.build_id.is_none());
+        assert_eq!(
+            crasher.build_id.as_deref(),
+            Some("2d4984456a0c95229abe1c1c9007381b98872995")
+        );
     }
 
     #[test]

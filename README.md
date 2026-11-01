@@ -75,6 +75,24 @@ signature: 6ae8cbf38275b439  SIGSEGV in app!render_widget
 `#0` is the innermost frame (where it crashed); each line below is its caller, out to `main`.
 `signature` is a stable hash of the normalized stack, so the same bug groups together.
 
+When a module has no local symbols, coretriage still unwinds it (it reads `.eh_frame` from the
+core) and lists it with the build-id to fetch debug info by, so you know what to pull:
+
+```text
+$ coretriage core.1234
+fault: signal 11 (SIGSEGV) at 0x0
+signature: 07d0a9ef7e6a4601  SIGSEGV in app!<unknown>
+* thread 4213
+    #0 app!<unknown>
+    #1 app!<unknown>
+modules without symbols (fetch debug info by build-id):
+    app        2d4984456a0c95229abe1c1c9007381b98872995
+    libc.so.6  fce446c9d4ad48e2b0c90cce1a11722897805281
+```
+
+Point `--debug-dir` at a store (elfutils or debuginfod layout) holding those build-ids, or pass
+`--exe`/`--sysroot`, to turn `<unknown>` into named frames.
+
 A directory of cores collapses to ranked, deduplicated crashes:
 
 ```text
