@@ -15,6 +15,11 @@ edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/rolandjitsu/coretriage"
 
+[profile.release]
+# Strip symbols from release binaries: smaller artifacts, and users triaging their own crash do
+# not need coretriage's own symbols. The release workflow builds in this profile.
+strip = true
+
 [workspace.dependencies]
 coretriage-core = { path = "crates/coretriage-core", version = "0.0.3" }
 
