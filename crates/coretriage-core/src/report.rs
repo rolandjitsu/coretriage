@@ -8,7 +8,7 @@ use std::io::Write;
 use serde::Serialize;
 
 use crate::Result;
-use crate::model::{Bucket, CrashReport, FaultKind, Frame};
+use crate::model::{Bucket, CrashReport, FaultKind, Frame, Module};
 
 /// A way to render triage results to a writer.
 ///
@@ -111,6 +111,30 @@ fn write_report(report: &CrashReport, out: &mut dyn Write) -> Result<()> {
             writeln!(out, "    #{depth} {}", format_frame(frame))?;
         }
     }
+    write_missing_symbols(report, out)
+}
+
+/// List modules whose frames could not be symbolicated, with the build-id to fetch debug info by.
+fn write_missing_symbols(report: &CrashReport, out: &mut dyn Write) -> Result<()> {
+    let missing: Vec<&Module> = report.modules.iter().filter(|m| !m.symbols).collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    writeln!(
+        out,
+        "modules without symbols (fetch debug info by build-id):"
+    )?;
+    for m in missing {
+        let name = m
+            .path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("<unknown>");
+        match &m.build_id {
+            Some(id) => writeln!(out, "    {name}  {id}")?,
+            None => writeln!(out, "    {name}  (no build-id)")?,
+        }
+    }
     Ok(())
 }
 
@@ -198,6 +222,37 @@ mod tests {
     }
 
     // Helpers after the tests that use them, per the house rules.
+    #[test]
+    fn text_report_lists_modules_without_symbols() {
+        let mut report = sample_report();
+        report.modules = vec![
+            Module {
+                path: "/opt/app/bin/worker".into(),
+                load_bias: 0,
+                build_id: Some("deadbeef".to_string()),
+                symbols: false,
+            },
+            Module {
+                path: "/lib/libc.so.6".into(),
+                load_bias: 0,
+                build_id: None,
+                symbols: false,
+            },
+            Module {
+                path: "/opt/app/lib/libresolved.so".into(),
+                load_bias: 0,
+                build_id: Some("cafef00d".to_string()),
+                symbols: true,
+            },
+        ];
+        let out = render(|w| TextEmitter.emit_report(&report, w));
+        assert!(out.contains("modules without symbols"), "{out}");
+        assert!(out.contains("worker  deadbeef"), "{out}");
+        assert!(out.contains("libc.so.6  (no build-id)"), "{out}");
+        // A module that has symbols is not listed.
+        assert!(!out.contains("libresolved.so"), "{out}");
+    }
+
     fn sample_report() -> CrashReport {
         CrashReport {
             fault: FaultKind::Signal {
@@ -205,6 +260,7 @@ mod tests {
                 address: Some(0),
             },
             crashing_tid: Some(42),
+            modules: Vec::new(),
             threads: vec![ThreadReport {
                 tid: 42,
                 name: Some("worker".to_string()),

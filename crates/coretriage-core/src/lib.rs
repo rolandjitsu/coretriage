@@ -168,9 +168,20 @@ fn triage_with(
             }
         })
         .collect();
+    let modules = map
+        .modules
+        .iter()
+        .map(|m| Module {
+            path: m.recorded_path.clone(),
+            load_bias: m.load_bias,
+            build_id: m.build_id.clone(),
+            symbols: m.has_symbols(),
+        })
+        .collect();
     let mut report = CrashReport {
         fault: parsed.fault,
         threads,
+        modules,
         crashing_tid: parsed.crashing_tid,
         signature: Signature::default(),
     };
@@ -253,6 +264,29 @@ mod tests {
                 frame.file
             );
         }
+    }
+
+    #[test]
+    fn report_surfaces_in_core_build_id_for_unresolved_modules() {
+        // No --exe and no debug store: the crasher is not found on disk, but the report still
+        // carries the build-id recorded in the core and marks the module as lacking symbols, so a
+        // user knows which build to fetch debug info for.
+        let dir = TempDir::new("unresolved-buildid");
+        let core = dir.put_core("segv");
+        let report = triage(&core, &TriageOptions::default()).expect("triage segv core");
+        let crasher = report
+            .modules
+            .iter()
+            .find(|m| m.path.file_name().and_then(|n| n.to_str()) == Some("crasher"))
+            .expect("crasher module in report");
+        assert!(
+            !crasher.symbols,
+            "no symbols without --exe or a debug store"
+        );
+        assert_eq!(
+            crasher.build_id.as_deref(),
+            Some("2d4984456a0c95229abe1c1c9007381b98872995")
+        );
     }
 
     #[test]

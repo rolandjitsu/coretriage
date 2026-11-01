@@ -15,8 +15,12 @@ pub struct Module {
     pub path: PathBuf,
     /// Virtual address the module's text segment was loaded at (its load bias).
     pub load_bias: u64,
-    /// GNU build-id as lowercase hex, when the module carries one.
+    /// GNU build-id as lowercase hex, when the module carries one. For a module not found on this
+    /// machine, this is the build-id recorded in the core image, so it can still be fetched.
     pub build_id: Option<String>,
+    /// Whether symbolication could name this module's frames: a local file was found carrying
+    /// DWARF (in the binary or a separate `.debug`). When false, fetch debug info by `build_id`.
+    pub symbols: bool,
 }
 
 /// A single stack frame in a thread's backtrace.
@@ -67,6 +71,9 @@ pub struct CrashReport {
     pub fault: FaultKind,
     /// Every thread recovered from the core.
     pub threads: Vec<ThreadReport>,
+    /// Every module mapped into the process. A module with `symbols == false` could not be
+    /// symbolicated locally; fetch its debug info by `build_id`.
+    pub modules: Vec<Module>,
     /// TID of the crashing (or stalled) thread, when one can be identified.
     pub crashing_tid: Option<i32>,
     /// Stable fingerprint of this crash, for dedup and tracking over time.

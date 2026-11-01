@@ -72,6 +72,7 @@ mod tests {
                 address: None,
             },
             threads: Vec::new(),
+            modules: Vec::new(),
             crashing_tid: None,
             signature: Signature {
                 hex: hex.to_string(),
