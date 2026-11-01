@@ -150,12 +150,23 @@ fn format_frame(frame: &Frame) -> String {
 
 /// Name of a common fatal signal, for the human-readable fault line.
 pub(crate) fn signal_name(signal: i32) -> Option<&'static str> {
+    // Standard Linux signal numbers (the generic ABI; a few differ on MIPS/SPARC/Alpha).
     match signal {
+        1 => Some("SIGHUP"),
+        2 => Some("SIGINT"),
+        3 => Some("SIGQUIT"),
         4 => Some("SIGILL"),
+        5 => Some("SIGTRAP"),
         6 => Some("SIGABRT"),
         7 => Some("SIGBUS"),
         8 => Some("SIGFPE"),
+        9 => Some("SIGKILL"),
         11 => Some("SIGSEGV"),
+        13 => Some("SIGPIPE"),
+        15 => Some("SIGTERM"),
+        24 => Some("SIGXCPU"),
+        25 => Some("SIGXFSZ"),
+        31 => Some("SIGSYS"),
         _ => None,
     }
 }
@@ -251,6 +262,26 @@ mod tests {
         assert!(out.contains("libc.so.6  (no build-id)"), "{out}");
         // A module that has symbols is not listed.
         assert!(!out.contains("libresolved.so"), "{out}");
+    }
+
+    #[test]
+    fn signal_name_covers_common_fatal_signals() {
+        assert_eq!(signal_name(3), Some("SIGQUIT"));
+        assert_eq!(signal_name(6), Some("SIGABRT"));
+        assert_eq!(signal_name(11), Some("SIGSEGV"));
+        assert_eq!(signal_name(31), Some("SIGSYS"));
+        assert_eq!(signal_name(99), None);
+    }
+
+    #[test]
+    fn text_report_names_sigquit() {
+        let mut report = sample_report();
+        report.fault = FaultKind::Signal {
+            number: 3,
+            address: None,
+        };
+        let out = render(|w| TextEmitter.emit_report(&report, w));
+        assert!(out.contains("fault: signal 3 (SIGQUIT)"), "{out}");
     }
 
     fn sample_report() -> CrashReport {
