@@ -14,12 +14,18 @@ ignore = []
 # coretriage is Apache-2.0; only permissive, redistribution-compatible licenses are allowed in
 # the tree. This set is the minimum that satisfies every SPDX expression currently resolved:
 # Apache-2.0 and MIT cover almost everything (every `OR` expression offers one of them), and
-# `unicode-ident` adds `Unicode-3.0` via an `AND` clause, so it must be allowed too. Enabling
-# object's compression support later re-adds a `Zlib`-licensed crate; add `Zlib` here then.
+# `unicode-ident` adds `Unicode-3.0` via an `AND` clause, so it must be allowed too. The
+# `debuginfod` feature's TLS stack (ureq -> rustls) adds `ISC` (ring, untrusted, rustls-webpki),
+# `BSD-3-Clause` (subtle), and `CDLA-Permissive-2.0` (webpki-roots, the Mozilla CA root set); all
+# are permissive and Apache-2.0-compatible. Enabling object's compression support later re-adds a
+# `Zlib`-licensed crate; add `Zlib` here then.
 allow = [
     "Apache-2.0",
     "MIT",
     "Unicode-3.0",
+    "ISC",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
 
