@@ -140,7 +140,8 @@ The pipeline runs in stages, each a module in `coretriage-core`:
    `--sysroot` overrides, into resolved modules with load biases and, where present, GNU
    build-ids. A binary not found by path is looked up by its build-id in a debug store
    (`--debug-dir`, the elfutils `.build-id` layout or the debuginfod `buildid/<id>/` layout), and
-   a stripped binary's separate `.debug` file is resolved the same way.
+   a stripped binary's separate `.debug` file is resolved the same way, or by following its
+   `.gnu_debuglink` when it carries no build-id.
 3. **Unwind** (`unwind`). Starting from each thread's `NT_PRSTATUS` registers, walk the stack
    with DWARF call-frame information via `framehop`, reading stack and register memory from the
    core image.

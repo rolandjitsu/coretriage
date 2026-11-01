@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use memmap2::Mmap;
 use object::read::elf::ElfFile64;
-use object::{Endianness, Object, ObjectSegment};
+use object::{Endianness, Object, ObjectSection, ObjectSegment};
 
 use crate::TriageOptions;
 use crate::core::{CoreMemory, ParsedCore};
@@ -147,13 +147,19 @@ pub(crate) fn build(parsed: &ParsedCore, core: &[u8], opts: &TriageOptions) -> M
         let load_bias = base_avma.saturating_sub(min_svma);
 
         // The DWARF: the binary itself when it still carries `.debug_info`, else the separate
-        // `.debug` file keyed by the same build-id (debug stores, then debuginfod).
+        // `.debug` file - keyed by build-id (debug stores, then debuginfod), and failing that by
+        // the binary's `.gnu_debuglink` (for stripped modules built without a build-id).
         let debug = if on_disk.as_deref().is_some_and(has_debug_info) {
             None
-        } else if let Some(id) = &driving_id {
-            resolve_debug(&debug_dirs, id, opts)
         } else {
-            None
+            driving_id
+                .as_deref()
+                .and_then(|id| resolve_debug(&debug_dirs, id, opts))
+                .or_else(|| {
+                    on_disk
+                        .as_deref()
+                        .and_then(|bin| resolve_debuglink(bin, &path, &debug_dirs))
+                })
         };
 
         // A wrong --exe/--sysroot silently yields bad symbols; warn when the on-disk build-id
@@ -352,6 +358,83 @@ fn resolve_debug(debug_dirs: &[PathBuf], build_id: &str, opts: &TriageOptions) -
     #[cfg(not(feature = "debuginfod"))]
     let _ = opts;
     None
+}
+
+/// Follow a binary's `.gnu_debuglink` to its separate debug file. The link stores a filename and
+/// a CRC-32 of the debug file's contents; only a file whose CRC matches is accepted, so a stale or
+/// wrong store is never used silently. This resolves stripped modules built without a build-id.
+///
+/// Candidates, in order: next to the binary, its `.debug/` subdir, each debug store mirroring the
+/// recorded absolute directory (`<store>/<recorded-dir>/<name>`, the elfutils convention), and the
+/// store root (`<store>/<name>`).
+fn resolve_debuglink(on_disk: &Path, recorded: &Path, debug_dirs: &[PathBuf]) -> Option<PathBuf> {
+    let (name, crc) = read_gnu_debuglink(on_disk)?;
+    find_debuglink(&name, crc, on_disk, recorded, debug_dirs)
+}
+
+/// Locate the debug file named by a `.gnu_debuglink`, accepting only one whose CRC-32 matches.
+fn find_debuglink(
+    name: &str,
+    crc: u32,
+    on_disk: &Path,
+    recorded: &Path,
+    debug_dirs: &[PathBuf],
+) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = on_disk.parent() {
+        candidates.push(dir.join(name));
+        candidates.push(dir.join(".debug").join(name));
+    }
+    if let Some(dir) = recorded.parent() {
+        let rel = dir.strip_prefix("/").unwrap_or(dir);
+        for store in debug_dirs {
+            candidates.push(store.join(rel).join(name));
+        }
+    }
+    for store in debug_dirs {
+        candidates.push(store.join(name));
+    }
+    candidates
+        .into_iter()
+        .find(|p| p.is_file() && file_crc32(p) == Some(crc))
+}
+
+/// Read a binary's `.gnu_debuglink`: the debug file name and the CRC-32 of its contents.
+fn read_gnu_debuglink(path: &Path) -> Option<(String, u32)> {
+    let mmap = map_file(path).ok()?;
+    let elf = ElfFile64::<Endianness>::parse(&*mmap).ok()?;
+    let section = elf.section_by_name(".gnu_debuglink")?;
+    parse_gnu_debuglink(section.data().ok()?)
+}
+
+/// Parse a `.gnu_debuglink` section body: a NUL-terminated name (a bare filename), NUL-padded to a
+/// 4-byte boundary, then a little-endian CRC-32. `None` if malformed or the name holds a path.
+fn parse_gnu_debuglink(data: &[u8]) -> Option<(String, u32)> {
+    let nul = data.iter().position(|&b| b == 0)?;
+    let name = std::str::from_utf8(data.get(..nul)?).ok()?;
+    if name.is_empty() || name.contains('/') {
+        return None;
+    }
+    let crc = data.get(data.len().checked_sub(4)?..)?;
+    Some((name.to_string(), u32::from_le_bytes(crc.try_into().ok()?)))
+}
+
+/// CRC-32 of a file's contents, as `.gnu_debuglink` records. `None` on read error.
+fn file_crc32(path: &Path) -> Option<u32> {
+    Some(crc32(&std::fs::read(path).ok()?))
+}
+
+/// CRC-32 (reflected, polynomial 0xEDB88320, init/final 0xFFFFFFFF) - the `.gnu_debuglink` CRC.
+fn crc32(data: &[u8]) -> u32 {
+    let mut crc: u32 = 0xFFFF_FFFF;
+    for &byte in data {
+        crc ^= byte as u32;
+        for _ in 0..8 {
+            let mask = (crc & 1).wrapping_neg();
+            crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
+        }
+    }
+    !crc
 }
 
 /// Whether an on-disk ELF still carries its own DWARF (a `.debug_info` section), so no separate
@@ -605,6 +688,68 @@ mod tests {
             crasher.build_id.as_deref(),
             Some("2d4984456a0c95229abe1c1c9007381b98872995")
         );
+    }
+
+    #[test]
+    fn crc32_matches_known_vector() {
+        // The canonical CRC-32 check value for the ASCII string "123456789".
+        assert_eq!(crc32(b"123456789"), 0xCBF4_3926);
+    }
+
+    #[test]
+    fn parse_gnu_debuglink_reads_name_and_crc() {
+        // "foo.debug\0" (10 bytes) padded to 12, then a little-endian CRC.
+        let mut data = b"foo.debug\0\0\0".to_vec();
+        data.extend_from_slice(&0x1234_5678u32.to_le_bytes());
+        assert_eq!(
+            parse_gnu_debuglink(&data),
+            Some(("foo.debug".to_string(), 0x1234_5678))
+        );
+        // A name with a path separator (traversal) and a too-short body are rejected.
+        assert!(parse_gnu_debuglink(b"../etc/x\0\0\0\0\0\0\0\0").is_none());
+        assert!(parse_gnu_debuglink(b"x\0").is_none());
+    }
+
+    #[test]
+    fn find_debuglink_accepts_only_a_crc_match() {
+        let dir = TempDir::new("debuglink");
+        // A fake binary (never read) and its debug file beside it.
+        let bin = dir.path.join("app.so");
+        let dbg = dir.path.join("app.so.debug");
+        std::fs::write(&dbg, b"the debug file contents").unwrap();
+        let crc = crc32(b"the debug file contents");
+        let recorded = Path::new("/opt/app/app.so");
+
+        assert_eq!(
+            find_debuglink("app.so.debug", crc, &bin, recorded, &[]),
+            Some(dbg.clone())
+        );
+        // Wrong CRC is refused, even though the named file exists.
+        assert!(find_debuglink("app.so.debug", crc ^ 1, &bin, recorded, &[]).is_none());
+
+        // Also found via a debug store mirroring the recorded directory.
+        let store = TempDir::new("debuglink-store");
+        let mirror = store.path.join("opt/app");
+        std::fs::create_dir_all(&mirror).unwrap();
+        std::fs::write(mirror.join("app.so.debug"), b"the debug file contents").unwrap();
+        let elsewhere = store.path.join("nobin");
+        assert!(
+            find_debuglink(
+                "app.so.debug",
+                crc,
+                &elsewhere,
+                recorded,
+                std::slice::from_ref(&store.path)
+            )
+            .is_some()
+        );
+    }
+
+    #[test]
+    fn resolve_debuglink_none_when_binary_has_no_link() {
+        // crasher.stripped carries no .gnu_debuglink, so there is nothing to follow.
+        let bin = fixture_path("crasher.stripped");
+        assert!(resolve_debuglink(&bin, Path::new("/tmp/crasher"), &[]).is_none());
     }
 
     #[test]
