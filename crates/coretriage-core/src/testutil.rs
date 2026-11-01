@@ -64,6 +64,17 @@ impl TempDir {
         std::fs::copy(fixture_path(fixture), &dest).expect("copy fixture into build-id store");
         dest
     }
+
+    /// Like `put_build_id`, but in the debuginfod cache layout `buildid/<id>/<name>`, where
+    /// `<name>` is `executable` for the binary or `debuginfo` for separated debuginfo. Returns the
+    /// artifact's path.
+    pub fn put_debuginfod(&self, fixture: &str, build_id: &str, name: &str) -> PathBuf {
+        let dir = self.path.join("buildid").join(build_id);
+        std::fs::create_dir_all(&dir).expect("create debuginfod dir");
+        let dest = dir.join(name);
+        std::fs::copy(fixture_path(fixture), &dest).expect("copy fixture into debuginfod store");
+        dest
+    }
 }
 
 impl Drop for TempDir {

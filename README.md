@@ -121,8 +121,8 @@ The pipeline runs in stages, each a module in `coretriage-core`:
 2. **Build the module map** (`maps`). Turn the `NT_FILE` entries, plus any `--exe` and
    `--sysroot` overrides, into resolved modules with load biases and, where present, GNU
    build-ids. A binary not found by path is looked up by its build-id in a debug store
-   (`--debug-dir`, the elfutils `.build-id` layout), and a stripped binary's separate `.debug`
-   file is resolved the same way.
+   (`--debug-dir`, the elfutils `.build-id` layout or the debuginfod `buildid/<id>/` layout), and
+   a stripped binary's separate `.debug` file is resolved the same way.
 3. **Unwind** (`unwind`). Starting from each thread's `NT_PRSTATUS` registers, walk the stack
    with DWARF call-frame information via `framehop`, reading stack and register memory from the
    core image.
@@ -146,8 +146,8 @@ concepts glossary.
 **Today (v0.2).** coretriage handles **Linux x86_64 ELF cores**, for both crashes (a fatal
 signal) and hangs. Modules are resolved from the core's `NT_FILE` table, from explicit `--exe` /
 `--sysroot` paths, and by GNU build-id from a local debug store (`--debug-dir`, the elfutils
-`.build-id` layout), including separate `.debug` files for stripped binaries, so a stripped
-production binary symbolicates without `--exe`. A `debuginfod` cargo feature (off by default)
+`.build-id` layout or the debuginfod `buildid/<id>/` layout), including separate `.debug` files
+for stripped binaries, so a stripped production binary symbolicates without `--exe`. A `debuginfod` cargo feature (off by default)
 adds `--debuginfod` to fetch missing binaries and debuginfo by build-id from a `debuginfod`
 server (`$DEBUGINFOD_URLS`) when the local stores miss. Output is text or JSON.
 

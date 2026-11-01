@@ -272,22 +272,35 @@ fn effective_debug_dirs(opts: &TriageOptions) -> Vec<PathBuf> {
     }
 }
 
-/// Locate a build-id artifact in the debug stores, in the elfutils layout
-/// `<dir>/.build-id/<ab>/<rest><suffix>`: `<ab>` is the first two hex chars of the build-id and
-/// `<rest>` the remainder. `suffix` is empty for the executable or `.debug` for its debuginfo.
+/// Locate a build-id artifact in the debug stores, trying two on-disk layouts per directory.
+/// `suffix` is empty for the executable or `.debug` for its debuginfo.
+///
+/// - elfutils: `<dir>/.build-id/<ab>/<rest><suffix>`, where `<ab>` is the first two hex chars of
+///   the build-id and `<rest>` the remainder.
+/// - debuginfod: `<dir>/buildid/<id>/<name>`, where `<name>` is `executable` or `debuginfo`. This
+///   is the layout of a debuginfod file cache and of split-debug trees that ship it (e.g. an
+///   exported `/usr/lib/debug` with a `buildid/` index), so a `--debug-dir` at either resolves.
 fn resolve_build_id_file(debug_dirs: &[PathBuf], build_id: &str, suffix: &str) -> Option<PathBuf> {
     // A build-id needs at least the two-char directory plus one more char to split.
     if build_id.len() < 3 {
         return None;
     }
     let (ab, rest) = build_id.split_at(2);
-    let rel = Path::new(".build-id")
+    let elfutils = Path::new(".build-id")
         .join(ab)
         .join(format!("{rest}{suffix}"));
+    let name = if suffix == ".debug" {
+        "debuginfo"
+    } else {
+        "executable"
+    };
+    let debuginfod = Path::new("buildid").join(build_id).join(name);
     for dir in debug_dirs {
-        let candidate = dir.join(&rel);
-        if candidate.is_file() {
-            return Some(candidate);
+        for rel in [&elfutils, &debuginfod] {
+            let candidate = dir.join(rel);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
         }
     }
     None
@@ -503,6 +516,63 @@ mod tests {
         assert_eq!(
             crasher.build_id.as_deref(),
             Some("2d4984456a0c95229abe1c1c9007381b98872995")
+        );
+    }
+
+    #[test]
+    fn resolves_crasher_by_build_id_in_debuginfod_layout() {
+        // Same as the elfutils-layout case, but the store uses the debuginfod cache layout
+        // `buildid/<id>/executable`, as a debuginfod cache or an exported debug tree uses.
+        let core = load_core("segv");
+        let parsed = crate::core::parse(&core).expect("parse segv core");
+        let store = TempDir::new("debuginfod-maps");
+        store.put_debuginfod(
+            "crasher",
+            "2d4984456a0c95229abe1c1c9007381b98872995",
+            "executable",
+        );
+        let opts = TriageOptions {
+            debug_dirs: vec![store.path.clone()],
+            ..Default::default()
+        };
+        let map = build(&parsed, &core, &opts);
+        let crasher = map
+            .modules
+            .iter()
+            .find(|m| m.name == "crasher")
+            .expect("crasher module");
+        assert!(
+            crasher.on_disk.is_some(),
+            "crasher found via debuginfod-layout store"
+        );
+        assert_eq!(
+            crasher.build_id.as_deref(),
+            Some("2d4984456a0c95229abe1c1c9007381b98872995")
+        );
+    }
+
+    #[test]
+    fn resolve_build_id_file_accepts_elfutils_and_debuginfod_layouts() {
+        let dir = TempDir::new("buildid-layouts");
+        let id = "abcdef0123456789";
+        // The debuginfo lives in the elfutils layout; the executable in the debuginfod layout.
+        std::fs::create_dir_all(dir.path.join(".build-id/ab")).unwrap();
+        std::fs::write(dir.path.join(".build-id/ab/cdef0123456789.debug"), b"d").unwrap();
+        std::fs::create_dir_all(dir.path.join(format!("buildid/{id}"))).unwrap();
+        std::fs::write(dir.path.join(format!("buildid/{id}/executable")), b"x").unwrap();
+
+        let dirs = [dir.path.clone()];
+        assert!(
+            resolve_build_id_file(&dirs, id, ".debug").is_some(),
+            "elfutils .debug"
+        );
+        assert!(
+            resolve_build_id_file(&dirs, id, "").is_some(),
+            "debuginfod executable"
+        );
+        assert!(
+            resolve_build_id_file(&dirs, "zz", "").is_none(),
+            "build-id too short to split"
         );
     }
 

@@ -24,8 +24,9 @@ struct Cli {
     /// Extra root to resolve recorded module paths against; repeatable.
     #[arg(long = "sysroot", value_name = "DIR")]
     sysroot: Vec<PathBuf>,
-    /// Debug store searched by GNU build-id (elfutils `.build-id` layout) for stripped
-    /// binaries and separate debuginfo; repeatable. Defaults to /usr/lib/debug.
+    /// Debug store searched by GNU build-id for stripped binaries and separate debuginfo;
+    /// repeatable. Accepts the elfutils `.build-id/<ab>/<rest>` layout or the debuginfod
+    /// `buildid/<id>/{executable,debuginfo}` layout. Defaults to /usr/lib/debug.
     #[arg(long = "debug-dir", value_name = "DIR")]
     debug_dir: Vec<PathBuf>,
     /// Fetch missing binaries and debuginfo by build-id from a debuginfod server
