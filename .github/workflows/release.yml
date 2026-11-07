@@ -115,7 +115,7 @@ jobs:
       # Attest that this workflow built the archive. The action leaves it in the workspace as
       # coretriage-<target>.tar.gz; `gh attestation verify <file> --repo <owner>/<repo>` checks it.
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: coretriage-${{ matrix.target }}.tar.gz
 
