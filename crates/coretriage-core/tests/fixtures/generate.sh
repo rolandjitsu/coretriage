@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
-# Generate golden x86_64 ELF core fixtures for coretriage.
+# Generate golden ELF core fixtures for coretriage, for the architecture it runs on.
 #
-# Run on a Linux x86_64 host. It cannot run on Apple Silicon: emulated cores
-# come out arm64 (Rosetta/qemu-user dump the translator, not the guest).
+# x86_64: run on a Linux x86_64 host. aarch64: run in a NATIVE arm64 Linux
+# container - on Apple Silicon, e.g.:
+#   podman run --rm -v "$PWD":/w -w /w docker.io/library/debian:bookworm-slim bash -c \
+#     'apt-get update && apt-get install -y gcc gdb binutils file && bash generate.sh'
+# Do not emulate the other arch (x86_64 under Rosetta/qemu-user): the cores come
+# out as the host arch, not the guest.
 #
-# It writes the C sources, compiles them, produces a crash core per fault mode
-# and a hang core, builds stripped + split-debug variants and an elfutils
-# debug store, verifies them, and packs everything into
-# coretriage-fixtures.tar.gz next to where you ran it, ready to copy back.
+# It writes the C sources, compiles them, produces a crash core per fault mode and
+# a hang core, builds stripped + split-debug variants and an elfutils debug store,
+# verifies them, and packs everything into coretriage-fixtures-<arch>.tar.gz next to
+# where you ran it. Unpack x86_64 into tests/fixtures/, aarch64 into
+# tests/fixtures/aarch64/, and re-gzip the cores (the test helper reads them gzipped).
 #
 # Needs: gcc, gdb, binutils (readelf, strip, objcopy), file, tar. The crash cores set
 # kernel.core_pattern, which needs root; the script saves and restores the
 # original and prompts for sudo. Without sudo it falls back to gdb-generated
 # cores (slightly different from kernel cores, but fine as fixtures).
 set -euo pipefail
+
+ARCH="$(uname -m)"
 
 need() { command -v "$1" >/dev/null || { echo "missing tool: $1 (install gcc gdb binutils file)"; exit 1; }; }
 need gcc; need gdb; need readelf; need strip; need objcopy; need file; need tar
@@ -151,11 +158,16 @@ ls -la crasher.stripped crasher.debug hang.stripped hang.debug
 find debugstore -type f -exec ls -la {} +
 
 echo "=== pack ==="
-TARBALL="$START/coretriage-fixtures.tar.gz"
+TARBALL="$START/coretriage-fixtures-${ARCH}.tar.gz"
 tar czf "$TARBALL" \
     crasher.c hang.c crasher hang \
     crasher.stripped crasher.debug hang.stripped hang.debug debugstore \
     segv.core abort.core hang.core
 echo
-echo "DONE. Copy this back to your Mac: $TARBALL"
+case "$ARCH" in
+    x86_64)  DEST="tests/fixtures/" ;;
+    aarch64) DEST="tests/fixtures/aarch64/" ;;
+    *)       DEST="tests/fixtures/$ARCH/" ;;
+esac
+echo "DONE ($ARCH). Copy back: $TARBALL -> unpack into $DEST and re-gzip the cores."
 ls -la "$TARBALL"

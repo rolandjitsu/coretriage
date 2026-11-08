@@ -178,8 +178,8 @@ concepts glossary.
 
 ## Roadmap
 
-**Today (v0.2).** coretriage handles **Linux x86_64 ELF cores**, for both crashes (a fatal
-signal) and hangs. Modules are resolved from the core's `NT_FILE` table, from explicit `--exe` /
+**Today (v0.2).** coretriage handles **Linux x86_64 and aarch64 ELF cores**, for both crashes (a
+fatal signal) and hangs. Modules are resolved from the core's `NT_FILE` table, from explicit `--exe` /
 `--sysroot` paths, and by GNU build-id from a local debug store (`--debug-dir`, the elfutils
 `.build-id` layout or the debuginfod `buildid/<id>/` layout), including separate `.debug` files
 for stripped binaries, so a stripped production binary symbolicates without `--exe`. A `debuginfod` cargo feature (off by default)
@@ -189,7 +189,6 @@ server (`$DEBUGINFOD_URLS`) when the local stores miss. Output is text, JSON, or
 
 Planned, roughly in order:
 
-- **More architectures** - aarch64 cores (the unwinder already handles the arch).
 - **More output formats.** Output is layered: the pipeline produces the data model and the
   `report` module renders it through an `Emitter`, so a new format is one more emitter, not a
   change to the pipeline. (Folded stacks for flame graphs already ship via `--format folded`.)

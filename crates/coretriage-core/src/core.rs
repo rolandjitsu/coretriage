@@ -6,7 +6,7 @@
 //! `PT_LOAD` segment table for the core memory accessor in [`crate::unwind`].
 
 use object::Endianness;
-use object::elf::{FileHeader64, PT_LOAD, PT_NOTE};
+use object::elf::{EM_AARCH64, EM_X86_64, FileHeader64, PT_LOAD, PT_NOTE};
 use object::read::elf::{FileHeader, ProgramHeader};
 
 use crate::model::FaultKind;
@@ -22,6 +22,8 @@ const NT_FILE: u32 = 0x4649_4c45;
 /// A core dump parsed into the data the pipeline needs.
 #[derive(Debug, Clone)]
 pub(crate) struct ParsedCore {
+    /// Architecture of the core, driving register parsing and the unwinder.
+    pub arch: Arch,
     /// Threads in the order the core records them; the crashing thread is first.
     pub threads: Vec<ParsedThread>,
     /// What took the process down.
@@ -95,15 +97,20 @@ pub(crate) struct ParsedThread {
     pub regs: Registers,
 }
 
-/// The x86_64 registers unwinding needs, read from the `pr_reg` array of `NT_PRSTATUS`.
-#[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct Registers {
-    /// Instruction pointer (the thread's current PC).
-    pub rip: u64,
-    /// Stack pointer.
-    pub rsp: u64,
-    /// Frame (base) pointer.
-    pub rbp: u64,
+/// CPU architecture of a core: selects the `NT_PRSTATUS` register layout and the unwinder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Arch {
+    X86_64,
+    Aarch64,
+}
+
+/// The registers unwinding needs from the `pr_reg` array of `NT_PRSTATUS`, per architecture.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Registers {
+    /// x86_64: instruction pointer, stack pointer, frame (base) pointer.
+    X86_64 { rip: u64, rsp: u64, rbp: u64 },
+    /// aarch64: program counter, stack pointer, link register (x30), frame pointer (x29).
+    Aarch64 { pc: u64, sp: u64, lr: u64, fp: u64 },
 }
 
 /// Parse the notes of an ELF core dump.
@@ -113,6 +120,15 @@ pub(crate) fn parse(data: &[u8]) -> Result<ParsedCore> {
     let endian = elf
         .endian()
         .map_err(|e| Error::Parse(format!("endianness: {e}")))?;
+    let arch = match elf.e_machine(endian) {
+        EM_X86_64 => Arch::X86_64,
+        EM_AARCH64 => Arch::Aarch64,
+        other => {
+            return Err(Error::Parse(format!(
+                "unsupported machine {other:#x}; only x86_64 and aarch64 cores are supported"
+            )));
+        }
+    };
     let headers = elf
         .program_headers(endian, data)
         .map_err(|e| Error::Parse(format!("program headers: {e}")))?;
@@ -145,7 +161,7 @@ pub(crate) fn parse(data: &[u8]) -> Result<ParsedCore> {
             .map_err(|e| Error::Parse(format!("note: {e}")))?
         {
             match note.n_type(endian) {
-                NT_PRSTATUS => threads.push(parse_prstatus(note.desc())?),
+                NT_PRSTATUS => threads.push(parse_prstatus(note.desc(), arch)?),
                 NT_SIGINFO if fault_addr.is_none() => fault_addr = Some(read_si_addr(note.desc())?),
                 // Keep the first NT_FILE; a core carries exactly one mapping table.
                 NT_FILE if nt_file.is_none() => nt_file = Some(note.desc().to_vec()),
@@ -176,6 +192,7 @@ pub(crate) fn parse(data: &[u8]) -> Result<ParsedCore> {
     };
 
     Ok(ParsedCore {
+        arch,
         threads,
         fault,
         crashing_tid,
@@ -184,17 +201,28 @@ pub(crate) fn parse(data: &[u8]) -> Result<ParsedCore> {
     })
 }
 
-/// Read the fields we need from a `struct elf_prstatus` descriptor (x86_64 layout):
-/// `pr_cursig` is a `short` at offset 12, `pr_pid` an `int` at offset 32, and the
-/// `user_regs_struct` (`pr_reg`) begins at offset 112, with `rbp` at index 4 (offset 144),
-/// `rip` at index 16 (offset 240), and `rsp` at index 19 (offset 264).
-fn parse_prstatus(desc: &[u8]) -> Result<ParsedThread> {
+/// Read the fields we need from a `struct elf_prstatus` descriptor. The header is the same on
+/// both LP64 arches - `pr_cursig` is a `short` at offset 12, `pr_pid` an `int` at offset 32, and
+/// `pr_reg` begins at offset 112 - but `pr_reg`'s layout is the arch's register file:
+/// - x86_64 (`user_regs_struct`): `rbp` at index 4 (offset 144), `rip` at index 16 (offset 240),
+///   `rsp` at index 19 (offset 264).
+/// - aarch64 (`user_pt_regs`): `x[0..31]` then `sp`, `pc`, `pstate`; so `x29`/fp at offset 344,
+///   `x30`/lr at offset 352, `sp` at offset 360, `pc` at offset 368.
+fn parse_prstatus(desc: &[u8], arch: Arch) -> Result<ParsedThread> {
     let cursig = i16::from_le_bytes(read_arr(desc, 12)?) as i32;
     let tid = i32::from_le_bytes(read_arr(desc, 32)?);
-    let regs = Registers {
-        rbp: u64::from_le_bytes(read_arr(desc, 144)?),
-        rip: u64::from_le_bytes(read_arr(desc, 240)?),
-        rsp: u64::from_le_bytes(read_arr(desc, 264)?),
+    let regs = match arch {
+        Arch::X86_64 => Registers::X86_64 {
+            rbp: u64::from_le_bytes(read_arr(desc, 144)?),
+            rip: u64::from_le_bytes(read_arr(desc, 240)?),
+            rsp: u64::from_le_bytes(read_arr(desc, 264)?),
+        },
+        Arch::Aarch64 => Registers::Aarch64 {
+            fp: u64::from_le_bytes(read_arr(desc, 344)?),
+            lr: u64::from_le_bytes(read_arr(desc, 352)?),
+            sp: u64::from_le_bytes(read_arr(desc, 360)?),
+            pc: u64::from_le_bytes(read_arr(desc, 368)?),
+        },
     };
     Ok(ParsedThread { tid, cursig, regs })
 }
@@ -253,7 +281,36 @@ mod tests {
     }
 
     #[test]
+    fn segv_core_aarch64_is_sigsegv_at_null() {
+        let core = parse(&load_core("aarch64/segv")).expect("parse aarch64 segv core");
+        assert_eq!(core.arch, Arch::Aarch64);
+        assert_eq!(core.threads.len(), 1);
+        assert_eq!(
+            core.fault,
+            FaultKind::Signal {
+                number: 11,
+                address: Some(0),
+            }
+        );
+        assert_eq!(core.crashing_tid, Some(core.threads[0].tid));
+    }
+
+    #[test]
     fn rejects_non_core_input() {
         assert!(parse(b"this is not an ELF file").is_err());
+    }
+
+    #[test]
+    fn rejects_unsupported_machine() {
+        // Patch e_machine (ELF64 header, offset 18, little-endian) to EM_ARM, which
+        // we do not support, and confirm parse rejects it rather than guessing a layout.
+        let mut core = load_core("segv");
+        core[18] = 40; // EM_ARM
+        core[19] = 0;
+        let err = parse(&core).expect_err("unsupported machine must be rejected");
+        assert!(
+            matches!(&err, Error::Parse(m) if m.contains("unsupported machine")),
+            "unexpected error: {err:?}"
+        );
     }
 }
