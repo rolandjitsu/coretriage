@@ -10,7 +10,7 @@ exclude = ["fuzz"]
 
 [workspace.package]
 # knope manages the shared version (see knope.toml); keep it at 0.0.0 until the first release.
-version = "0.0.5"
+version = "0.0.6"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/rolandjitsu/coretriage"
@@ -21,7 +21,7 @@ repository = "https://github.com/rolandjitsu/coretriage"
 strip = true
 
 [workspace.dependencies]
-coretriage-core = { path = "crates/coretriage-core", version = "0.0.5" }
+coretriage-core = { path = "crates/coretriage-core", version = "0.0.6" }
 
 # Core-dump parsing, unwinding, and symbolication. object/gimli/addr2line are a matched trio
 # (addr2line 0.26 resolves gimli 0.33 + object 0.39), and framehop 0.16 shares the same gimli 0.33,
