@@ -70,8 +70,18 @@ coretriage cores/ --format folded | inferno-flamegraph > crashes.svg
 beta trunk that splits into gamma_segv (6 cores, a SIGSEGV) and an abort path (2 cores, a
 SIGABRT); box width is the number of cores.](docs/flamegraph.png)
 
-The folded format is the common one, so the same output also renders with Brendan Gregg's original
-`flamegraph.pl` or loads directly into [speedscope](https://www.speedscope.app/).
+Export to your observability stack as OpenTelemetry. `--format otel-metrics` emits an OTLP/JSON
+`coretriage.faults` counter (one data point per bucket, weighted by core count) and
+`--format otel-logs` emits one OTLP/JSON event per distinct fault; both carry the signature,
+signal, top frame, and build-id as attributes. coretriage stays offline and writes to stdout, so
+post it to an OTel Collector (or any OTLP/HTTP endpoint):
+
+```sh
+coretriage cores/ --format otel-metrics \
+  | curl -s -X POST -H 'Content-Type: application/json' --data-binary @- \
+      http://localhost:4318/v1/metrics
+coretriage cores/ --format otel-logs > faults.json   # or POST to /v1/logs
+```
 
 Or emit a [pprof](https://github.com/google/pprof) profile - each bucket a weighted stack sample -
 for `go tool pprof`, Pyroscope, Parca, or Grafana. It is binary, so redirect it to a file:
@@ -145,7 +155,7 @@ Use **coretriage** when you have many cores or want automation:
   ranked by frequency, not 500 debugger sessions.
 - **Tracking crashes over time** - the stable signature lets you dedup, count, and alert when a
   new signature appears or one spikes.
-- **Automation** - headless, no debugger, clean JSON on stdout for CI, a dashboard, or (soon)
+- **Automation** - headless, no debugger, clean JSON on stdout for CI, a dashboard, or
   OpenTelemetry. It is also a library you can embed.
 - **Hangs** - `gcore` a stuck process and get an all-thread fingerprint of where it is parked.
 
@@ -201,17 +211,16 @@ fatal signal) and hangs. Modules are resolved from the core's `NT_FILE` table, f
 for stripped binaries, so a stripped production binary symbolicates without `--exe`. A `debuginfod` cargo feature (off by default)
 adds `--debuginfod` to fetch missing binaries and debuginfo by build-id from a `debuginfod`
 server (`$DEBUGINFOD_URLS`) when the local stores miss. Output is text, JSON, folded stacks
-(for a flame graph), or a pprof profile.
+(for a flame graph), a pprof profile, or OpenTelemetry OTLP/JSON (a fault metric and per-fault
+events).
+
+Output is layered: the pipeline produces the data model and the `report` module renders it through
+an `Emitter`, so a new format is one more emitter, not a change to the pipeline. Text, JSON, folded
+stacks (`--format folded`), pprof (`--format pprof`), and OpenTelemetry OTLP/JSON
+(`--format otel-metrics` / `--format otel-logs`) all ship this way.
 
 Planned, roughly in order:
 
-- **More output formats.** Output is layered: the pipeline produces the data model and the
-  `report` module renders it through an `Emitter`, so a new format is one more emitter, not a
-  change to the pipeline. (Folded stacks ship via `--format folded`, and pprof via
-  `--format pprof`.)
-  - **OpenTelemetry events and metrics** - emit each bucket as a structured event or counter
-    (signature, signal, top frame, build-id, count) to track crash signatures over time and
-    alert when a new one appears or a rate spikes.
 - **A crash-watcher agent** - a node-level service (systemd or a k8s DaemonSet) that consumes
   captured cores, triages them, and emits the above to your observability stack.
 

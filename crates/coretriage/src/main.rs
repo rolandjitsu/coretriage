@@ -9,8 +9,8 @@ use std::process::ExitCode;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use coretriage_core::{
-    Emitter, FoldedEmitter, JsonEmitter, PprofEmitter, TextEmitter, TriageOptions, triage,
-    triage_batch,
+    Emitter, FoldedEmitter, JsonEmitter, OtelLogsEmitter, OtelMetricsEmitter, PprofEmitter,
+    TextEmitter, TriageOptions, triage, triage_batch,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -57,6 +57,10 @@ enum OutputFormat {
     Folded,
     /// pprof protobuf, for Pyroscope/Parca/`go tool pprof` (binary; redirect to a `.pb` file).
     Pprof,
+    /// OpenTelemetry OTLP/JSON metrics: a fault counter, for an OTel Collector or `/v1/metrics`.
+    OtelMetrics,
+    /// OpenTelemetry OTLP/JSON logs: one event per fault, for an OTel Collector or `/v1/logs`.
+    OtelLogs,
 }
 
 impl OutputFormat {
@@ -67,6 +71,8 @@ impl OutputFormat {
             OutputFormat::Json => Box::new(JsonEmitter { pretty: true }),
             OutputFormat::Folded => Box::new(FoldedEmitter),
             OutputFormat::Pprof => Box::new(PprofEmitter),
+            OutputFormat::OtelMetrics => Box::new(OtelMetricsEmitter),
+            OutputFormat::OtelLogs => Box::new(OtelLogsEmitter),
         }
     }
 }
@@ -145,12 +151,14 @@ mod tests {
 
     #[test]
     fn each_output_format_builds_a_working_emitter() {
-        // Every CLI format must map to an emitter that runs; guards the folded addition too.
+        // Every CLI format must map to an emitter that runs on an empty batch.
         for fmt in [
             OutputFormat::Text,
             OutputFormat::Json,
             OutputFormat::Folded,
             OutputFormat::Pprof,
+            OutputFormat::OtelMetrics,
+            OutputFormat::OtelLogs,
         ] {
             let mut out = Vec::new();
             fmt.emitter()

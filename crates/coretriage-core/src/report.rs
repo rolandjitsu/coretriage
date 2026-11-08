@@ -1,7 +1,7 @@
 //! Render triage results for output. A [`CrashReport`] or a set of [`Bucket`]s is written
 //! through an [`Emitter`], so each output format is one implementor and new formats are added
 //! without touching the pipeline. It ships [`TextEmitter`], [`JsonEmitter`], [`FoldedEmitter`],
-//! and [`PprofEmitter`]; an OpenTelemetry emitter is on the roadmap (see the repository README).
+//! [`PprofEmitter`], [`OtelMetricsEmitter`], and [`OtelLogsEmitter`].
 
 use std::io::Write;
 
@@ -112,6 +112,43 @@ impl Emitter for PprofEmitter {
         out.write_all(&crate::pprof::encode_buckets(buckets))?;
         Ok(())
     }
+}
+
+/// OpenTelemetry OTLP/JSON metrics: a monotonic `coretriage.faults` counter, one data point per
+/// bucket (its core count), for an OTel Collector or an OTLP/HTTP `/v1/metrics` endpoint.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct OtelMetricsEmitter;
+
+impl Emitter for OtelMetricsEmitter {
+    fn emit_report(&self, report: &CrashReport, out: &mut dyn Write) -> Result<()> {
+        write_json_line(&crate::otel::encode_metrics_report(report), out)
+    }
+
+    fn emit_buckets(&self, buckets: &[Bucket], out: &mut dyn Write) -> Result<()> {
+        write_json_line(&crate::otel::encode_metrics_buckets(buckets), out)
+    }
+}
+
+/// OpenTelemetry OTLP/JSON logs: one `LogRecord` per distinct fault (ERROR for a signal, WARN for
+/// a hang), for an OTel Collector or an OTLP/HTTP `/v1/logs` endpoint.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct OtelLogsEmitter;
+
+impl Emitter for OtelLogsEmitter {
+    fn emit_report(&self, report: &CrashReport, out: &mut dyn Write) -> Result<()> {
+        write_json_line(&crate::otel::encode_logs_report(report), out)
+    }
+
+    fn emit_buckets(&self, buckets: &[Bucket], out: &mut dyn Write) -> Result<()> {
+        write_json_line(&crate::otel::encode_logs_buckets(buckets), out)
+    }
+}
+
+/// Write a compact single-line JSON document, for the OTLP/JSON emitters.
+fn write_json_line(value: &serde_json::Value, out: &mut dyn Write) -> Result<()> {
+    serde_json::to_writer(&mut *out, value)?;
+    writeln!(out)?;
+    Ok(())
 }
 
 /// Write folded lines for one report at `weight`: the crashing thread for a signal fault, every
@@ -457,6 +494,24 @@ mod tests {
         }];
         let buckets_pb = render_bytes(|w| PprofEmitter.emit_buckets(&buckets, w));
         assert!(!buckets_pb.is_empty(), "buckets yield a pprof profile");
+    }
+
+    #[test]
+    fn otel_emitters_render_otlp_json() {
+        let report = sample_report();
+        let buckets = vec![Bucket {
+            signature: report.signature.clone(),
+            count: 2,
+            representative: report.clone(),
+        }];
+        let metrics = render(|w| OtelMetricsEmitter.emit_report(&report, w));
+        assert!(metrics.contains("coretriage.faults"), "{metrics}");
+        let metrics_batch = render(|w| OtelMetricsEmitter.emit_buckets(&buckets, w));
+        assert!(metrics_batch.contains("\"asInt\":\"2\""), "{metrics_batch}");
+        let logs = render(|w| OtelLogsEmitter.emit_report(&report, w));
+        assert!(logs.contains("coretriage.fault"), "{logs}");
+        let logs_batch = render(|w| OtelLogsEmitter.emit_buckets(&buckets, w));
+        assert!(logs_batch.contains("ERROR"), "{logs_batch}");
     }
 
     fn sample_report() -> CrashReport {
