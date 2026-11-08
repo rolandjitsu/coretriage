@@ -290,6 +290,35 @@ mod tests {
     }
 
     #[test]
+    fn aarch64_segv_backtrace_resolves_with_exe() {
+        // The whole pipeline on an aarch64 core: parse the aarch64 NT_PRSTATUS, unwind with
+        // framehop's aarch64 unwinder, and symbolicate from the matching binary.
+        let opts = TriageOptions {
+            exe: Some(fixture_path("aarch64/crasher")),
+            top: 0,
+            ..Default::default()
+        };
+        let report = triage_bytes(&load_core("aarch64/segv"), &opts).expect("triage aarch64 segv");
+
+        let tid = report.crashing_tid.expect("a crashing thread");
+        let thread = report
+            .threads
+            .iter()
+            .find(|t| t.tid == tid)
+            .expect("crashing thread in report");
+        let top: Vec<&str> = thread
+            .frames
+            .iter()
+            .take(4)
+            .map(|f| f.function.as_deref().unwrap_or("?"))
+            .collect();
+        assert_eq!(top, vec!["gamma_segv", "beta", "alpha", "main"]);
+        for frame in thread.frames.iter().take(4) {
+            assert_eq!(frame.module.as_deref(), Some("crasher"));
+        }
+    }
+
+    #[test]
     fn segv_backtrace_resolves_by_build_id_without_exe() {
         // A debug store holding the crasher binary under its build-id, elfutils layout.
         let store = TempDir::new("buildid-store");

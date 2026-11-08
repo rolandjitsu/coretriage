@@ -4,12 +4,13 @@
 
 use std::ops::Range;
 
+use framehop::aarch64::{CacheAarch64, UnwindRegsAarch64, UnwinderAarch64};
 use framehop::x86_64::{CacheX86_64, UnwindRegsX86_64, UnwinderX86_64};
 use framehop::{ExplicitModuleSectionInfo, FrameAddress, Module, Unwinder};
 use object::read::elf::ElfFile64;
 use object::{Endianness, Object, ObjectSection};
 
-use crate::core::{CoreMemory, ParsedCore};
+use crate::core::{Arch, CoreMemory, ParsedCore, ParsedThread, Registers};
 use crate::maps::{ModuleMap, ResolvedModule, map_file};
 
 /// Upper bound on frames per thread, so a corrupt stack cannot spin or allocate without end.
@@ -18,46 +19,69 @@ const MAX_FRAMES: usize = 4096;
 /// Unwind every thread in the core, returning each thread's frames innermost-first (the PC
 /// first, then return addresses). Threads are returned in the same order as `parsed.threads`.
 pub(crate) fn unwind(parsed: &ParsedCore, core: &[u8], map: &ModuleMap) -> Vec<Vec<FrameAddress>> {
-    let mut unwinder = UnwinderX86_64::<Vec<u8>>::new();
-    for module in &map.modules {
-        if let Some(fh) = framehop_module(module) {
-            unwinder.add_module(fh);
-        }
-    }
-
+    let modules: Vec<Module<Vec<u8>>> = map.modules.iter().filter_map(framehop_module).collect();
     let mem = CoreMemory::new(core, &parsed.segments);
+    match parsed.arch {
+        Arch::X86_64 => unwind_x86_64(modules, &mem, &parsed.threads),
+        Arch::Aarch64 => unwind_aarch64(modules, &mem, &parsed.threads),
+    }
+}
+
+/// Unwind every thread of an x86_64 core from its seed registers.
+fn unwind_x86_64(
+    modules: Vec<Module<Vec<u8>>>,
+    mem: &CoreMemory,
+    threads: &[ParsedThread],
+) -> Vec<Vec<FrameAddress>> {
+    let mut unwinder = UnwinderX86_64::<Vec<u8>>::new();
+    for m in modules {
+        unwinder.add_module(m);
+    }
     let mut cache = CacheX86_64::new();
-    parsed
-        .threads
+    threads
         .iter()
         .map(|t| {
-            unwind_thread(
-                &unwinder, &mut cache, &mem, t.regs.rip, t.regs.rsp, t.regs.rbp,
-            )
+            let Registers::X86_64 { rip, rsp, rbp } = t.regs else {
+                return Vec::new();
+            };
+            let mut read_stack = |addr: u64| mem.read_u64(addr).ok_or(());
+            let regs = UnwindRegsX86_64::new(rip, rsp, rbp);
+            let mut iter = unwinder.iter_frames(rip, regs, &mut cache, &mut read_stack);
+            drain_frames(|| iter.next())
         })
         .collect()
 }
 
-/// Unwind one thread from its seed registers, reading stack memory from the core.
-fn unwind_thread(
-    unwinder: &UnwinderX86_64<Vec<u8>>,
-    cache: &mut CacheX86_64,
+/// Unwind every thread of an aarch64 core from its seed registers (pc/sp/lr/fp).
+fn unwind_aarch64(
+    modules: Vec<Module<Vec<u8>>>,
     mem: &CoreMemory,
-    rip: u64,
-    rsp: u64,
-    rbp: u64,
-) -> Vec<FrameAddress> {
-    let mut read_stack = |addr: u64| mem.read_u64(addr).ok_or(());
-    let mut iter = unwinder.iter_frames(
-        rip,
-        UnwindRegsX86_64::new(rip, rsp, rbp),
-        cache,
-        &mut read_stack,
-    );
+    threads: &[ParsedThread],
+) -> Vec<Vec<FrameAddress>> {
+    let mut unwinder = UnwinderAarch64::<Vec<u8>>::new();
+    for m in modules {
+        unwinder.add_module(m);
+    }
+    let mut cache = CacheAarch64::new();
+    threads
+        .iter()
+        .map(|t| {
+            let Registers::Aarch64 { pc, sp, lr, fp } = t.regs else {
+                return Vec::new();
+            };
+            let mut read_stack = |addr: u64| mem.read_u64(addr).ok_or(());
+            let regs = UnwindRegsAarch64::new(lr, sp, fp);
+            let mut iter = unwinder.iter_frames(pc, regs, &mut cache, &mut read_stack);
+            drain_frames(|| iter.next())
+        })
+        .collect()
+}
 
+/// Drive a frame iterator innermost-first, bounded by `MAX_FRAMES`. `step` yields the next frame;
+/// a trailing `Err` is normal when the stack root cannot be proven, so stop and keep what we have.
+fn drain_frames<E>(mut step: impl FnMut() -> Result<Option<FrameAddress>, E>) -> Vec<FrameAddress> {
     let mut frames = Vec::new();
-    // A trailing `Err` is normal when the stack root cannot be proven; keep what we have.
-    while let Ok(Some(frame)) = iter.next() {
+    while let Ok(Some(frame)) = step() {
         frames.push(frame);
         if frames.len() >= MAX_FRAMES {
             break;
@@ -142,5 +166,62 @@ mod tests {
                 crasher.avma_range
             );
         }
+    }
+
+    #[test]
+    fn segv_crashing_thread_unwinds_into_crasher_aarch64() {
+        let core = load_core("aarch64/segv");
+        let parsed = crate::core::parse(&core).expect("parse aarch64 segv core");
+        let opts = TriageOptions {
+            exe: Some(fixture_path("aarch64/crasher")),
+            ..Default::default()
+        };
+        let map = crate::maps::build(&parsed, &core, &opts);
+        let crasher = map
+            .modules
+            .iter()
+            .find(|m| m.name == "crasher")
+            .expect("crasher module");
+
+        let frames = &unwind(&parsed, &core, &map)[0];
+        assert!(frames.len() >= 4, "only {} frames", frames.len());
+        for frame in frames.iter().take(4) {
+            let pc = frame.address_for_lookup();
+            assert!(
+                crasher.avma_range.contains(&pc),
+                "frame pc {pc:#x} not in crasher range {:#x?}",
+                crasher.avma_range
+            );
+        }
+    }
+
+    #[test]
+    fn mismatched_register_arch_yields_no_frames() {
+        // parse never hands an arch's unwinder a thread with the other arch's registers,
+        // but each unwinder guards against it: the thread gets an empty backtrace rather
+        // than being unwound with the wrong register seed.
+        let mem = CoreMemory::new(&[], &[]);
+        let as_aarch64 = ParsedThread {
+            tid: 1,
+            cursig: 11,
+            regs: Registers::Aarch64 {
+                pc: 0,
+                sp: 0,
+                lr: 0,
+                fp: 0,
+            },
+        };
+        assert!(unwind_x86_64(Vec::new(), &mem, &[as_aarch64])[0].is_empty());
+
+        let as_x86_64 = ParsedThread {
+            tid: 1,
+            cursig: 11,
+            regs: Registers::X86_64 {
+                rip: 0,
+                rsp: 0,
+                rbp: 0,
+            },
+        };
+        assert!(unwind_aarch64(Vec::new(), &mem, &[as_x86_64])[0].is_empty());
     }
 }
