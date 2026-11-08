@@ -27,6 +27,7 @@ mod core;
 #[cfg(feature = "debuginfod")]
 mod debuginfod;
 mod maps;
+mod pprof;
 pub mod report;
 mod signature;
 mod symbolize;
@@ -37,7 +38,7 @@ mod testutil;
 
 pub use error::{Error, Result};
 pub use model::{Bucket, CrashReport, FaultKind, Frame, Module, Signature, ThreadReport};
-pub use report::{Emitter, FoldedEmitter, JsonEmitter, TextEmitter};
+pub use report::{Emitter, FoldedEmitter, JsonEmitter, PprofEmitter, TextEmitter};
 
 /// Inputs that control a triage run.
 #[derive(Debug, Clone, Default)]
