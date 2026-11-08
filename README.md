@@ -59,6 +59,13 @@ coretriage cores/ --format json   # machine-readable
 coretriage cores/ --top 32        # keep more frames per thread
 ```
 
+Render a flame graph of where crashes concentrate. `--format folded` emits Brendan Gregg folded
+stacks (each bucket weighted by its core count), ready to pipe into a flame-graph tool:
+
+```sh
+coretriage cores/ --format folded | inferno-flamegraph > crashes.svg
+```
+
 ## Example
 
 A single crash core, pointing `--exe` at the matching binary:
@@ -170,17 +177,15 @@ signal) and hangs. Modules are resolved from the core's `NT_FILE` table, from ex
 `.build-id` layout or the debuginfod `buildid/<id>/` layout), including separate `.debug` files
 for stripped binaries, so a stripped production binary symbolicates without `--exe`. A `debuginfod` cargo feature (off by default)
 adds `--debuginfod` to fetch missing binaries and debuginfo by build-id from a `debuginfod`
-server (`$DEBUGINFOD_URLS`) when the local stores miss. Output is text or JSON.
+server (`$DEBUGINFOD_URLS`) when the local stores miss. Output is text, JSON, or folded stacks
+(for a flame graph).
 
 Planned, roughly in order:
 
 - **More architectures** - aarch64 cores (the unwinder already handles the arch).
 - **More output formats.** Output is layered: the pipeline produces the data model and the
   `report` module renders it through an `Emitter`, so a new format is one more emitter, not a
-  change to the pipeline.
-  - **Folded stacks / flame graph** - Brendan Gregg folded format to pipe into `inferno` or any
-    flame-graph tool; a crash flame graph shows where crashes concentrate, and for a hang an
-    all-thread merged graph shows where every thread is parked.
+  change to the pipeline. (Folded stacks for flame graphs already ship via `--format folded`.)
   - **pprof** - a bucket is a weighted stack sample, exactly what pprof encodes, so crash
     frequency can be explored in Pyroscope, Parca, or Grafana (also the natural OpenTelemetry
     fit, since its profiling signal is pprof-based).

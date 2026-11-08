@@ -37,7 +37,7 @@ mod testutil;
 
 pub use error::{Error, Result};
 pub use model::{Bucket, CrashReport, FaultKind, Frame, Module, Signature, ThreadReport};
-pub use report::{Emitter, JsonEmitter, TextEmitter};
+pub use report::{Emitter, FoldedEmitter, JsonEmitter, TextEmitter};
 
 /// Inputs that control a triage run.
 #[derive(Debug, Clone, Default)]

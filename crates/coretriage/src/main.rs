@@ -8,7 +8,9 @@ use std::process::ExitCode;
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
-use coretriage_core::{Emitter, JsonEmitter, TextEmitter, TriageOptions, triage, triage_batch};
+use coretriage_core::{
+    Emitter, FoldedEmitter, JsonEmitter, TextEmitter, TriageOptions, triage, triage_batch,
+};
 use tracing_subscriber::EnvFilter;
 
 /// Triage Linux ELF core dumps: unwind, symbolicate, and bucket crashes and hangs.
@@ -50,6 +52,8 @@ enum OutputFormat {
     Text,
     /// JSON for machine consumption.
     Json,
+    /// Brendan Gregg folded stacks, for a flame graph (pipe into inferno).
+    Folded,
 }
 
 impl OutputFormat {
@@ -58,6 +62,7 @@ impl OutputFormat {
         match self {
             OutputFormat::Text => Box::new(TextEmitter),
             OutputFormat::Json => Box::new(JsonEmitter { pretty: true }),
+            OutputFormat::Folded => Box::new(FoldedEmitter),
         }
     }
 }
@@ -128,4 +133,20 @@ fn run_batch(dir: &Path, opts: &TriageOptions, emitter: &dyn Emitter) -> Result<
     emitter.emit_buckets(&buckets, &mut out)?;
     out.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_output_format_builds_a_working_emitter() {
+        // Every CLI format must map to an emitter that runs; guards the folded addition too.
+        for fmt in [OutputFormat::Text, OutputFormat::Json, OutputFormat::Folded] {
+            let mut out = Vec::new();
+            fmt.emitter()
+                .emit_buckets(&[], &mut out)
+                .expect("emitter runs on an empty batch");
+        }
+    }
 }
