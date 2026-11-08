@@ -66,6 +66,13 @@ stacks (each bucket weighted by its core count), ready to pipe into a flame-grap
 coretriage cores/ --format folded | inferno-flamegraph > crashes.svg
 ```
 
+![Crash flame graph from coretriage --format folded: eight cores share a crasher!main -> alpha ->
+beta trunk that splits into gamma_segv (6 cores, a SIGSEGV) and an abort path (2 cores, a
+SIGABRT); box width is the number of cores.](docs/flamegraph.png)
+
+The folded format is the common one, so the same output also renders with Brendan Gregg's original
+`flamegraph.pl` or loads directly into [speedscope](https://www.speedscope.app/).
+
 ## Example
 
 A single crash core, pointing `--exe` at the matching binary:
