@@ -86,8 +86,8 @@ signature: 07d0a9ef7e6a4601  SIGSEGV in app!<unknown>
     #0 app!<unknown>
     #1 app!<unknown>
 modules without symbols (fetch debug info by build-id):
-    app        2d4984456a0c95229abe1c1c9007381b98872995
-    libc.so.6  fce446c9d4ad48e2b0c90cce1a11722897805281
+    app        a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f80910
+    libc.so.6  0f1e2d3c4b5a69788796a5b4c3d2e1f00a1b2c3d
 ```
 
 Point `--debug-dir` at a store (elfutils or debuginfod layout) holding those build-ids, or pass
