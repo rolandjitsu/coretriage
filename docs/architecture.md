@@ -20,7 +20,7 @@ flowchart TD
     unwind --> symbolize["symbolize: addr2line<br/>address to function + file:line<br/>(inlines, demangling)"]
     maps --> symbolize
     symbolize --> signature["signature: BLAKE3<br/>normalize + hash the stack<br/>into a stable fingerprint"]
-    signature --> report["report: Emitter<br/>text or JSON"]
+    signature --> report["report: Emitter<br/>text, JSON, folded, or pprof"]
     signature --> aggregate["aggregate: bucket<br/>group + rank distinct crashes"]
     aggregate --> report
 ```

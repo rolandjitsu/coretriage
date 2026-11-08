@@ -73,6 +73,22 @@ SIGABRT); box width is the number of cores.](docs/flamegraph.png)
 The folded format is the common one, so the same output also renders with Brendan Gregg's original
 `flamegraph.pl` or loads directly into [speedscope](https://www.speedscope.app/).
 
+Or emit a [pprof](https://github.com/google/pprof) profile - each bucket a weighted stack sample -
+for `go tool pprof`, Pyroscope, Parca, or Grafana. It is binary, so redirect it to a file:
+
+```sh
+coretriage cores/ --format pprof > crashes.pb
+go tool pprof -top crashes.pb              # ranked functions
+go tool pprof -http=:8080 crashes.pb       # flame graph + call graph in the browser
+```
+
+Because a profile carries function and file:line as structured fields, two runs can be diffed to
+see which crashes are spreading, and the same `.pb` ingests into a continuous-profiling backend:
+
+```sh
+go tool pprof -diff_base=last_week.pb this_week.pb   # which signatures grew
+```
+
 ## Example
 
 A single crash core, pointing `--exe` at the matching binary:
@@ -184,17 +200,15 @@ fatal signal) and hangs. Modules are resolved from the core's `NT_FILE` table, f
 `.build-id` layout or the debuginfod `buildid/<id>/` layout), including separate `.debug` files
 for stripped binaries, so a stripped production binary symbolicates without `--exe`. A `debuginfod` cargo feature (off by default)
 adds `--debuginfod` to fetch missing binaries and debuginfo by build-id from a `debuginfod`
-server (`$DEBUGINFOD_URLS`) when the local stores miss. Output is text, JSON, or folded stacks
-(for a flame graph).
+server (`$DEBUGINFOD_URLS`) when the local stores miss. Output is text, JSON, folded stacks
+(for a flame graph), or a pprof profile.
 
 Planned, roughly in order:
 
 - **More output formats.** Output is layered: the pipeline produces the data model and the
   `report` module renders it through an `Emitter`, so a new format is one more emitter, not a
-  change to the pipeline. (Folded stacks for flame graphs already ship via `--format folded`.)
-  - **pprof** - a bucket is a weighted stack sample, exactly what pprof encodes, so crash
-    frequency can be explored in Pyroscope, Parca, or Grafana (also the natural OpenTelemetry
-    fit, since its profiling signal is pprof-based).
+  change to the pipeline. (Folded stacks ship via `--format folded`, and pprof via
+  `--format pprof`.)
   - **OpenTelemetry events and metrics** - emit each bucket as a structured event or counter
     (signature, signal, top frame, build-id, count) to track crash signatures over time and
     alert when a new one appears or a rate spikes.

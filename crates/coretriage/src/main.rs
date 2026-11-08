@@ -9,7 +9,8 @@ use std::process::ExitCode;
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use coretriage_core::{
-    Emitter, FoldedEmitter, JsonEmitter, TextEmitter, TriageOptions, triage, triage_batch,
+    Emitter, FoldedEmitter, JsonEmitter, PprofEmitter, TextEmitter, TriageOptions, triage,
+    triage_batch,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -54,6 +55,8 @@ enum OutputFormat {
     Json,
     /// Brendan Gregg folded stacks, for a flame graph (pipe into inferno).
     Folded,
+    /// pprof protobuf, for Pyroscope/Parca/`go tool pprof` (binary; redirect to a `.pb` file).
+    Pprof,
 }
 
 impl OutputFormat {
@@ -63,6 +66,7 @@ impl OutputFormat {
             OutputFormat::Text => Box::new(TextEmitter),
             OutputFormat::Json => Box::new(JsonEmitter { pretty: true }),
             OutputFormat::Folded => Box::new(FoldedEmitter),
+            OutputFormat::Pprof => Box::new(PprofEmitter),
         }
     }
 }
@@ -142,7 +146,12 @@ mod tests {
     #[test]
     fn each_output_format_builds_a_working_emitter() {
         // Every CLI format must map to an emitter that runs; guards the folded addition too.
-        for fmt in [OutputFormat::Text, OutputFormat::Json, OutputFormat::Folded] {
+        for fmt in [
+            OutputFormat::Text,
+            OutputFormat::Json,
+            OutputFormat::Folded,
+            OutputFormat::Pprof,
+        ] {
             let mut out = Vec::new();
             fmt.emitter()
                 .emit_buckets(&[], &mut out)

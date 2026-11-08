@@ -1,8 +1,7 @@
 //! Render triage results for output. A [`CrashReport`] or a set of [`Bucket`]s is written
 //! through an [`Emitter`], so each output format is one implementor and new formats are added
-//! without touching the pipeline. It ships [`TextEmitter`], [`JsonEmitter`], and
-//! [`FoldedEmitter`]; pprof and OpenTelemetry emitters are on the roadmap (see the repository
-//! README).
+//! without touching the pipeline. It ships [`TextEmitter`], [`JsonEmitter`], [`FoldedEmitter`],
+//! and [`PprofEmitter`]; an OpenTelemetry emitter is on the roadmap (see the repository README).
 
 use std::io::Write;
 
@@ -93,6 +92,24 @@ impl Emitter for FoldedEmitter {
         for bucket in buckets {
             fold_report(&bucket.representative, bucket.count, out)?;
         }
+        Ok(())
+    }
+}
+
+/// pprof (github.com/google/pprof): a protobuf profile of weighted stack samples, for Pyroscope,
+/// Parca, Grafana, or `go tool pprof`. Each bucket is one sample weighted by its core count. The
+/// output is binary protobuf, so redirect it to a file (conventionally `.pb`).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PprofEmitter;
+
+impl Emitter for PprofEmitter {
+    fn emit_report(&self, report: &CrashReport, out: &mut dyn Write) -> Result<()> {
+        out.write_all(&crate::pprof::encode_report(report))?;
+        Ok(())
+    }
+
+    fn emit_buckets(&self, buckets: &[Bucket], out: &mut dyn Write) -> Result<()> {
+        out.write_all(&crate::pprof::encode_buckets(buckets))?;
         Ok(())
     }
 }
@@ -427,6 +444,21 @@ mod tests {
         assert_eq!(render(|w| FoldedEmitter.emit_report(&empty, w)), "");
     }
 
+    #[test]
+    fn pprof_emits_protobuf_for_report_and_buckets() {
+        let report = sample_report();
+        let report_pb = render_bytes(|w| PprofEmitter.emit_report(&report, w));
+        assert!(!report_pb.is_empty(), "a report yields a pprof profile");
+
+        let buckets = vec![Bucket {
+            signature: report.signature.clone(),
+            count: 3,
+            representative: report.clone(),
+        }];
+        let buckets_pb = render_bytes(|w| PprofEmitter.emit_buckets(&buckets, w));
+        assert!(!buckets_pb.is_empty(), "buckets yield a pprof profile");
+    }
+
     fn sample_report() -> CrashReport {
         CrashReport {
             fault: FaultKind::Signal {
@@ -464,8 +496,15 @@ mod tests {
     where
         F: FnOnce(&mut Vec<u8>) -> Result<()>,
     {
+        String::from_utf8(render_bytes(f)).expect("utf8")
+    }
+
+    fn render_bytes<F>(f: F) -> Vec<u8>
+    where
+        F: FnOnce(&mut Vec<u8>) -> Result<()>,
+    {
         let mut buf = Vec::new();
         f(&mut buf).expect("emit");
-        String::from_utf8(buf).expect("utf8")
+        buf
     }
 }
