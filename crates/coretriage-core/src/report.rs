@@ -115,7 +115,8 @@ impl Emitter for PprofEmitter {
 }
 
 /// OpenTelemetry OTLP/JSON metrics: a monotonic `coretriage.faults` counter, one data point per
-/// bucket (its core count), for an OTel Collector or an OTLP/HTTP `/v1/metrics` endpoint.
+/// bucket (its core count), for an OTel Collector or an OTLP/HTTP `/v1/metrics` endpoint. The
+/// `docs/otel.md` reference documents the metric and attribute schema.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct OtelMetricsEmitter;
 
@@ -130,7 +131,8 @@ impl Emitter for OtelMetricsEmitter {
 }
 
 /// OpenTelemetry OTLP/JSON logs: one `LogRecord` per distinct fault (ERROR for a signal, WARN for
-/// a hang), for an OTel Collector or an OTLP/HTTP `/v1/logs` endpoint.
+/// a hang), for an OTel Collector or an OTLP/HTTP `/v1/logs` endpoint. The `docs/otel.md`
+/// reference documents the event and attribute schema.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct OtelLogsEmitter;
 

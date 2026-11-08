@@ -83,6 +83,8 @@ coretriage cores/ --format otel-metrics \
 coretriage cores/ --format otel-logs > faults.json   # or POST to /v1/logs
 ```
 
+The metric, event, and attribute schema is documented in [docs/otel.md](docs/otel.md).
+
 Or emit a [pprof](https://github.com/google/pprof) profile - each bucket a weighted stack sample -
 for `go tool pprof`, Pyroscope, Parca, or Grafana. It is binary, so redirect it to a file:
 
