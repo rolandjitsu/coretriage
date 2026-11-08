@@ -17,12 +17,14 @@ It ships as two crates: the [`coretriage-core`](./crates/coretriage-core) librar
 ## Install
 
 ```sh
-cargo install coretriage    # from crates.io
-cargo binstall coretriage   # prebuilt binary, no compile
+cargo install coretriage    # from crates.io (add --features debuginfod to enable --debuginfod)
+cargo binstall coretriage   # prebuilt binary, no compile (debuginfod already enabled)
 ```
 
 Prebuilt binaries for Linux and macOS are attached to each
-[release](https://github.com/rolandjitsu/coretriage/releases).
+[release](https://github.com/rolandjitsu/coretriage/releases). They are built with the
+`debuginfod` feature, so `--debuginfod` works out of the box; it still makes no network call
+unless you pass that flag.
 
 ## Usage
 

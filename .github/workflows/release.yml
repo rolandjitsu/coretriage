@@ -108,6 +108,10 @@ jobs:
           target: ${{ matrix.target }}
           archive: $bin-$target
           tar: unix
+          # Ship the prebuilt with debuginfod support so `--debuginfod` works out of the box; it
+          # still makes no network call unless that flag is passed. (`cargo install` stays offline
+          # by default - add `--features debuginfod` there.)
+          features: debuginfod
           # Upload a per-asset SHA-256 checksum (coretriage-<target>.tar.gz.sha256).
           checksum: sha256
           ref: refs/tags/v${{ needs.release.outputs.version }}
