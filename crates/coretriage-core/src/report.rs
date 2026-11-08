@@ -1,14 +1,15 @@
 //! Render triage results for output. A [`CrashReport`] or a set of [`Bucket`]s is written
 //! through an [`Emitter`], so each output format is one implementor and new formats are added
-//! without touching the pipeline. v0.1 ships [`TextEmitter`] and [`JsonEmitter`]; folded-stack,
-//! pprof, and OpenTelemetry emitters are on the roadmap (see the repository README).
+//! without touching the pipeline. It ships [`TextEmitter`], [`JsonEmitter`], and
+//! [`FoldedEmitter`]; pprof and OpenTelemetry emitters are on the roadmap (see the repository
+//! README).
 
 use std::io::Write;
 
 use serde::Serialize;
 
 use crate::Result;
-use crate::model::{Bucket, CrashReport, FaultKind, Frame, Module};
+use crate::model::{Bucket, CrashReport, FaultKind, Frame, Module, ThreadReport};
 
 /// A way to render triage results to a writer.
 ///
@@ -75,6 +76,74 @@ impl JsonEmitter {
         writeln!(out)?;
         Ok(())
     }
+}
+
+/// Brendan Gregg "folded stacks": one line per stack, `frame;frame;... <count>`, root-first, to
+/// pipe into inferno or any flame-graph tool. A crash contributes its crashing thread's stack; a
+/// hang contributes every thread's. In a batch, each bucket is weighted by its core count.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FoldedEmitter;
+
+impl Emitter for FoldedEmitter {
+    fn emit_report(&self, report: &CrashReport, out: &mut dyn Write) -> Result<()> {
+        fold_report(report, 1, out)
+    }
+
+    fn emit_buckets(&self, buckets: &[Bucket], out: &mut dyn Write) -> Result<()> {
+        for bucket in buckets {
+            fold_report(&bucket.representative, bucket.count, out)?;
+        }
+        Ok(())
+    }
+}
+
+/// Write folded lines for one report at `weight`: the crashing thread for a signal fault, every
+/// thread for a hang (so a merged graph shows where each thread is parked).
+fn fold_report(report: &CrashReport, weight: usize, out: &mut dyn Write) -> Result<()> {
+    match report.fault {
+        FaultKind::Signal { .. } => {
+            if let Some(thread) = folded_crashing_thread(report) {
+                write_folded_stack(&thread.frames, weight, out)?;
+            }
+        }
+        FaultKind::Hang => {
+            for thread in &report.threads {
+                write_folded_stack(&thread.frames, weight, out)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The thread a fault is attributed to, or the first thread when none is marked.
+fn folded_crashing_thread(report: &CrashReport) -> Option<&ThreadReport> {
+    match report.crashing_tid {
+        Some(tid) => report.threads.iter().find(|t| t.tid == tid),
+        None => report.threads.first(),
+    }
+}
+
+/// One folded line `root;...;leaf <weight>` (coretriage frames are leaf-first, so reverse them).
+/// An empty stack writes nothing; a `;` in a frame is neutralized so it cannot read as a separator.
+fn write_folded_stack(frames: &[Frame], weight: usize, out: &mut dyn Write) -> Result<()> {
+    if frames.is_empty() {
+        return Ok(());
+    }
+    let stack = frames
+        .iter()
+        .rev()
+        .map(folded_frame)
+        .collect::<Vec<_>>()
+        .join(";");
+    writeln!(out, "{stack} {weight}")?;
+    Ok(())
+}
+
+/// A frame as `module!function` for folded output, with `;` replaced so the separator stays safe.
+fn folded_frame(frame: &Frame) -> String {
+    let module = frame.module.as_deref().unwrap_or("?");
+    let function = frame.function.as_deref().unwrap_or("<unknown>");
+    format!("{module}!{function}").replace(';', ":")
 }
 
 fn write_report(report: &CrashReport, out: &mut dyn Write) -> Result<()> {
@@ -282,6 +351,80 @@ mod tests {
         };
         let out = render(|w| TextEmitter.emit_report(&report, w));
         assert!(out.contains("fault: signal 3 (SIGQUIT)"), "{out}");
+    }
+
+    #[test]
+    fn folded_report_is_root_first_and_weighted_one() {
+        let report = sample_report();
+        let out = render(|w| FoldedEmitter.emit_report(&report, w));
+        // coretriage frames are leaf-first, so folded reverses them: main, then the crash site.
+        assert_eq!(out.trim(), "app!main;app!Widget::render 1");
+    }
+
+    #[test]
+    fn folded_buckets_weight_each_stack_by_core_count() {
+        let buckets = vec![Bucket {
+            signature: Signature {
+                hex: "7f3a9c2e".to_string(),
+                label: "SIGSEGV in app!Widget::render".to_string(),
+            },
+            count: 312,
+            representative: sample_report(),
+        }];
+        let out = render(|w| FoldedEmitter.emit_buckets(&buckets, w));
+        assert_eq!(out.trim(), "app!main;app!Widget::render 312");
+    }
+
+    #[test]
+    fn folded_hang_emits_every_thread() {
+        let mut report = sample_report();
+        report.fault = FaultKind::Hang;
+        report.crashing_tid = None;
+        report.threads = vec![
+            ThreadReport {
+                tid: 1,
+                name: None,
+                frames: vec![Frame {
+                    module: Some("libc.so.6".to_string()),
+                    function: Some("pthread_cond_wait".to_string()),
+                    file: None,
+                    line: None,
+                }],
+            },
+            ThreadReport {
+                tid: 2,
+                name: None,
+                frames: vec![Frame {
+                    module: Some("app".to_string()),
+                    function: Some("poll_loop".to_string()),
+                    file: None,
+                    line: None,
+                }],
+            },
+        ];
+        let out = render(|w| FoldedEmitter.emit_report(&report, w));
+        assert!(out.contains("libc.so.6!pthread_cond_wait 1"), "{out}");
+        assert!(out.contains("app!poll_loop 1"), "{out}");
+        assert_eq!(out.lines().count(), 2, "{out}");
+    }
+
+    #[test]
+    fn folded_skips_empty_and_unidentified_stacks() {
+        // A signal fault with no identifiable crashing thread folds to nothing.
+        let mut none = sample_report();
+        none.crashing_tid = None;
+        none.threads = Vec::new();
+        assert_eq!(render(|w| FoldedEmitter.emit_report(&none, w)), "");
+
+        // A crashing thread with an empty stack also yields nothing.
+        let mut empty = sample_report();
+        empty.crashing_tid = Some(7);
+        empty.threads = vec![ThreadReport {
+            tid: 7,
+            name: None,
+            frames: Vec::new(),
+        }];
+        assert_eq!(render(|w| FoldedEmitter.emit_report(&empty, w)), "");
     }
 
     fn sample_report() -> CrashReport {
