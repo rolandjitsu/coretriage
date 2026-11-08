@@ -753,6 +753,79 @@ mod tests {
     }
 
     #[test]
+    fn resolve_debuglink_reads_a_real_elf_section_and_checks_crc() {
+        let dir = TempDir::new("debuglink-elf");
+        let debug_bytes = b"pretend DWARF payload";
+        std::fs::write(dir.path.join("prog.debug"), debug_bytes).unwrap();
+
+        // The section body: the debug file name (NUL-terminated, padded to 4 bytes) then its CRC-32.
+        let mut body = b"prog.debug\0\0".to_vec();
+        body.extend_from_slice(&crc32(debug_bytes).to_le_bytes());
+        let bin = dir.path.join("prog");
+        write_elf_with_gnu_debuglink(&bin, &body);
+
+        // The named debug file sits next to the binary and its CRC agrees, so it resolves through
+        // the real ELF section read.
+        assert_eq!(
+            resolve_debuglink(&bin, Path::new("/opt/prog"), &[]),
+            Some(dir.path.join("prog.debug"))
+        );
+
+        // Tamper with the debug file: the CRC no longer matches, so it is refused.
+        std::fs::write(dir.path.join("prog.debug"), b"tampered").unwrap();
+        assert!(resolve_debuglink(&bin, Path::new("/opt/prog"), &[]).is_none());
+    }
+
+    /// Write a minimal little-endian ET_REL x86_64 ELF carrying one `.gnu_debuglink` section with
+    /// `body`, to exercise the debuglink reader without a toolchain or a committed binary.
+    fn write_elf_with_gnu_debuglink(path: &Path, body: &[u8]) {
+        // Section-name string table: names for .gnu_debuglink (offset 1) and .shstrtab (offset 16).
+        let shstrtab: &[u8] = b"\0.gnu_debuglink\0.shstrtab\0";
+        let dl_off = 64u64; // section data starts right after the 64-byte ELF header
+        let dl_size = body.len() as u64;
+        let str_off = dl_off + dl_size;
+        let str_size = shstrtab.len() as u64;
+        let shoff = (str_off + str_size + 7) & !7; // section header table, 8-byte aligned
+
+        let mut b = Vec::new();
+        // ELF header (64 bytes).
+        b.extend_from_slice(&[0x7f, b'E', b'L', b'F', 2, 1, 1, 0]); // magic, 64-bit, LE, v1
+        b.extend_from_slice(&[0u8; 8]); // rest of e_ident
+        b.extend_from_slice(&1u16.to_le_bytes()); // e_type = ET_REL
+        b.extend_from_slice(&62u16.to_le_bytes()); // e_machine = x86-64
+        b.extend_from_slice(&1u32.to_le_bytes()); // e_version
+        b.extend_from_slice(&0u64.to_le_bytes()); // e_entry
+        b.extend_from_slice(&0u64.to_le_bytes()); // e_phoff
+        b.extend_from_slice(&shoff.to_le_bytes()); // e_shoff
+        b.extend_from_slice(&0u32.to_le_bytes()); // e_flags
+        b.extend_from_slice(&64u16.to_le_bytes()); // e_ehsize
+        b.extend_from_slice(&0u16.to_le_bytes()); // e_phentsize
+        b.extend_from_slice(&0u16.to_le_bytes()); // e_phnum
+        b.extend_from_slice(&64u16.to_le_bytes()); // e_shentsize
+        b.extend_from_slice(&3u16.to_le_bytes()); // e_shnum
+        b.extend_from_slice(&2u16.to_le_bytes()); // e_shstrndx
+        assert_eq!(b.len(), 64);
+        // Section data.
+        b.extend_from_slice(body);
+        b.extend_from_slice(shstrtab);
+        b.resize(shoff as usize, 0);
+        // Section headers: NULL, .gnu_debuglink (SHT_PROGBITS), .shstrtab (SHT_STRTAB).
+        let shdr = |name: u32, typ: u32, off: u64, size: u64, align: u64| {
+            let mut s = [0u8; 64];
+            s[0..4].copy_from_slice(&name.to_le_bytes());
+            s[4..8].copy_from_slice(&typ.to_le_bytes());
+            s[24..32].copy_from_slice(&off.to_le_bytes());
+            s[32..40].copy_from_slice(&size.to_le_bytes());
+            s[48..56].copy_from_slice(&align.to_le_bytes());
+            s
+        };
+        b.extend_from_slice(&[0u8; 64]);
+        b.extend_from_slice(&shdr(1, 1, dl_off, dl_size, 4));
+        b.extend_from_slice(&shdr(16, 3, str_off, str_size, 1));
+        std::fs::write(path, b).unwrap();
+    }
+
+    #[test]
     fn rejects_nt_file_with_bogus_count() {
         // count = u64::MAX cannot be backed by a 16-byte descriptor.
         let mut desc = Vec::new();
